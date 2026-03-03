@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime
 import numpy as np
 import time
+from tqdm import tqdm
 from utils import utils_deepsdf
 import results
 from torch.utils.tensorboard import SummaryWriter
@@ -88,8 +89,7 @@ class Trainer():
 
         best_loss = 10000000000
         start = time.time()
-        for epoch in range(self.train_cfg['epochs']):
-            print(f'============================ Epoch {epoch} ============================')
+        for epoch in tqdm(range(self.train_cfg['epochs']), desc="Epochs", unit="epoch"):
             self.epoch = epoch
 
             avg_train_loss = self.train(train_loader)
@@ -167,7 +167,7 @@ class Trainer():
         total_loss = 0.0
         iterations = 0.0
         self.model.train()
-        for batch in train_loader:
+        for batch in tqdm(train_loader, desc=f"Train Epoch {self.epoch}", leave=False, unit="batch"):
             # batch[0]: [class, x, y, z], shape: (batch_size, 4)
             # batch[1]: [sdf], shape: (batch size)
             iterations += 1.0
@@ -201,7 +201,7 @@ class Trainer():
         iterations = 0.0
         self.model.eval()
 
-        for batch in val_loader:
+        for batch in tqdm(val_loader, desc="Validation", leave=False, unit="batch"):
             # batch[0]: [class, x, y, z], shape: (batch_size, 4)
             # batch[1]: [sdf], shape: (batch size)
             iterations += 1.0            

@@ -4,6 +4,7 @@ import numpy as np
 import results
 import os
 from pathlib import Path
+from tqdm import tqdm
 from utils import utils_mesh
 import point_cloud_utils as pcu
 import config_files
@@ -62,7 +63,7 @@ def _extract_3dpotatotwin(cfg):
     idx_int2str_dict = dict()
     obj_idx = 0
 
-    for sample_id in ids:
+    for sample_id in tqdm(ids, desc="Extracting SDF", unit="sample"):
         pair_file = os.path.join(pair_folder, sample_id + '.json')
         if not os.path.isfile(pair_file):
             print(f"Skipping {sample_id}: missing {pair_file}")
