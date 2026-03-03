@@ -33,5 +33,5 @@ class SDFDataset(Dataset):
         return latent_class, sdf
 
 if __name__=='__main__':
-    dataset_name = "ShapeNetCore"
+    dataset_name = "Potato"
     dataset = SDFDataset(dataset_name)

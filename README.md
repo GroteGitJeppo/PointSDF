@@ -34,6 +34,7 @@ If you find this repository useful, please consider citing:
 # Content
 - [Learning resources](#learning-resources)
 - [Installation](#installation)
+- [Linux GPU cluster](#linux-gpu-cluster)
 - [Usage](#usage)
     - [Data making](#data-making)
     - [Training](#training-deepsdf)
@@ -66,6 +67,9 @@ Please note: on macOS, the current stable pytorch3d package will be installed. O
 # Installation (Windows)
 COMING SOON. Currently the installation script does not support Windows, please install the dependencies manually.
 
+# Linux GPU cluster
+- **Running on an external Linux GPU cluster:** See [INSTALL.md](INSTALL.md) for CUDA/env setup, path configuration, and example batch job.
+
 # Usage
 ## Quick example with a pretrained model
 The next sections explain how to create a dataset, train a model, and reconstruct or complete shapes. Here we just provide a minimal example with a small pretrained model:
@@ -74,10 +78,8 @@ The next sections explain how to create a dataset, train a model, and reconstruc
 
 Set **`config_files/reconstruct_from_latent.yaml`** as follows:
 ```
-# Config file for reconstructing objects from latent code
-
 folder_sdf: '17_07_172540'
-obj_ids: ['02942699/5d42d432ec71bfa1d5004b533b242ce6']
+obj_ids: ['sample_id_1']
 resolution: 256
 ```
 Run:
@@ -89,27 +91,7 @@ In `results/runs_sdf/<TIMESTAMP>/meshes_training/` you should see your reconstru
 <img title="a title" alt="Partial pointcloud and reconstructed mesh (a camera)" src="imgs/mesh_reconstructed.png" style="width: 40%">
 
 **Shape completion**
-Set **`config_files/shape_completion.yaml`** as follows:
-```
-folder_sdf: '17_07_172540'   
-obj_ids: '02942699/5d42d432ec71bfa1d5004b533b242ce6'
-resolution: 256
-
-# Visible bounding box for shape completion
-x_axis_ratio_bbox: 1
-y_axis_ratio_bbox: 0.5
-z_axis_ratio_bbox: 1
-
-# Inference parameters
-epochs: 10000 
-lr: 0.00001
-lr_scheduler: True   
-lr_multiplier: 0.9
-patience: 100
-sigma_regulariser: 0.01
-clamp: True
-clamp_value: 0.1
-```
+Set **`config_files/shape_completion.yaml`** with your `folder_sdf`, `root_dir` (3DPotatoTwin data root), and `obj_ids` (sample_id), plus visible bounding box ratios and inference parameters.
 Run:
 ```
 python scripts/shape_completion.py
@@ -118,31 +100,20 @@ The result is stored in `results/runs_sdf/<TIMESTAMP>/infer_latent_<TIMESTAMP>/`
 <img title="a title" alt="Partial pointcloud and reconstructed mesh (a camera)" src="imgs/mesh_completed.png" style="width: 70%">
 
 ## Data making
-The dataset in this repository already contains three shapes from ShapeNetCoreV2. To train on more shapes, please download the ShapeNetCoreV2 datset from the [official website](https://shapenet.org/) and copy its content under `data/ShapeNetCoreV2`. The following format is required:
-```
-root
- ├── data
- │   ├── ShapeNetCoreV2
- │   │   ├── 02942699 
- |   |   |   ├── 1ab3abb5c090d9b68e940c4e64a94e1e
- |   |   |   |   ├── models
- |   |   |   |   |   ├── model_normalized.obj
- ...
-```
-To extract the SDF values required to train DeepSDF, simply set the number of samples to generate in `config_files/extract_sdf.yaml` and run:
+Data is in the **3DPotatoTwin dataset** layout: a `root_dir` containing `3_pair/tmatrix` (pair JSONs with `rgbd_pcd_file`, `sfm_mesh_file`, `T`), `2_sfm`, etc., and `splits.csv` (with columns `label` and `split`) in the same folder.
+
+In `config_files/extract_sdf.yaml` set `root_dir` and `splits_csv` to your 3DPotatoTwin data path (the folder that already contains the data and splits). Optionally set `split` to `'train'`, `'val'`, or `'test'` to extract only that split (omit to extract all). Then run:
 ```
 python data/extract_sdf.py
 ```
-This script automatically converts the mesh into a watertight mesh prior to data collection. Moreover, in Shapenet the front of the object is aligned with -Z axis. Before extracting the samples, we rotate the object to align it with the canonical reference frame using `utils_mesh.shapenet_rotate()`.
-
-The collected data is stored in:
-- `results/samples_dict_ShapeNetCore.npy`: dictionary containing collected samples and corresponding SDF values per shape.
-- `idx_int2str_dict.npy`: dictionary mapping object numerical indexes to corresponding ShapeNet category/synset.
-- `idx_str2int_dict.npy`: dictionary mapping ShapeNet category/synset to object numerical indexes.
+This script loads each sample’s mesh and partial point cloud, normalizes using per-sample center and scale, and writes SDF samples. The collected data is stored in:
+- `results/samples_dict_Potato.npy`: collected samples and SDF values per shape.
+- `idx_int2str_dict.npy`: object index to sample_id.
+- `idx_str2int_dict.npy`: sample_id to object index.
 
 
 ## Training DeepSDF
-Configure the training parameters in `config_files/train_sdf.py` and run:
+Configure the training parameters in `config_files/train_sdf.yaml` and run:
 ```
 python model/train_sdf.py
 ```
@@ -157,28 +128,16 @@ tensorboard --logdir `runs_sdf`
 
 
 ## Reconstructing shapes
-The latent codes optimised at training time are stored in `results/runs_sdf/<TIMESTAMP>/results.npy`. If you want to reconstruct the shapes using the trained DeepSDF model and the latent codes optimised at training time, set `config_files/reconstruct_from_latent.yaml`. The possible `obj_ids` to reconstruct are those available in `data/ShapeNetCoreV2`, e.g. `02942699/6d036fd1c70e5a5849493d905c02fa86`. 
-
-Then, simply run:
+The latent codes optimised at training time are stored in `results/runs_sdf/<TIMESTAMP>/results.npy`. To reconstruct shapes, set `config_files/reconstruct_from_latent.yaml` with `folder_sdf`, `obj_ids` (sample_ids from your extraction), and `resolution`. Then run:
 ```
 python scripts/reconstruct_from_latent.py
 ```
 The folder `meshes_training` is created under the corresponding `results/runs_sdf/<TIMESTAMP>/` and the reconstructed `.obj` files are stored. You can visualise `.obj` files using [Online 3D Viewer](https://3dviewer.net/), Blender, Trimesh, or any graphics library.
 
 ## Shape Completion
-DeepSDF can reconstruct shapes when provided with partial pointclouds of the object's surface. This is achieved by leveraging the auto-decoder framework, which infers the latent code that best describes the provided pointcloud at test-time. 
+DeepSDF can reconstruct shapes when provided with partial pointclouds of the object's surface. This is achieved by leveraging the auto-decoder framework, which infers the latent code that best describes the provided pointcloud at test-time.
 
-To extract and predict the mesh geometry from a partial pointcloud, set `config_files/shape_completion.yaml`. Here' an example of parameters for pointcloud extraction:
-```
-x_axis_ratio_bbox: 0.5   
-y_axis_ratio_bbox: 1
-z_axis_ratio_bbox: 1
-```
-This configuration selects points along 50% of the x-axis, the entire y-axis, and the entire z-axis.
-
-Additionally, you can configure the hyperparameters for latent code inference.
-
-Please note: before extracting the pointcloud, remember to rotate the mesh using the provided method `utils_mesh.shapenet_rotate(original_mesh)`. This method makes sure to align the object to our canonical reference frame. The partial pointcloud generation is handled by the method `scripts/shape_completion.py -> generate_partial_pointcloud(cfg)`. Edit this function for custom data extraction. 
+Set `config_files/shape_completion.yaml` with `folder_sdf`, `root_dir` (3DPotatoTwin data root), and `obj_ids` (a sample_id). The partial pointcloud is generated from the mesh loaded via the pair JSON at `root_dir/3_pair/tmatrix/<sample_id>.json`. The ratios `x_axis_ratio_bbox`, `y_axis_ratio_bbox`, `z_axis_ratio_bbox` define the visible bounding box used to simulate a partial view. You can also configure the hyperparameters for latent code inference. 
 
 # Known issues
 - Finding a matching combination of Pytorch, Pytorch3D, CUDA version, and hardware is tricky. If you encounter compatibility issues when installing Pytorch3D on Linux, please refer to `https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md`.

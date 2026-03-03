@@ -1,3 +1,4 @@
+import json
 import torch
 import os
 import model.model_sdf as sdf_model
@@ -7,9 +8,7 @@ from results import runs_sdf
 import numpy as np
 import config_files
 import yaml
-import data.ShapeNetCoreV2 as ShapeNetCoreV2
 from utils import utils_mesh
-import pybullet as pb
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 """Infer and reconstruct mesh from a partial point cloud.
@@ -50,32 +49,30 @@ def reconstruct_object(cfg, latent_code, obj_idx, model, coords_batches, grad_si
 
 def generate_partial_pointcloud(cfg):
     """Load mesh and generate partial point cloud. The ratio of the visible bounding box is defined in the config file.
+    Uses 3DPotatoTwin dataset: root_dir and obj_ids (sample_id). Loads mesh from pair JSON sfm_mesh_file.
     Args:
         cfg: config file
     Return:
         samples: np.array, shape (N, 3), where N is the number of points in the partial point cloud.
-        """
-    # Load mesh
-    obj_path = os.path.join(os.path.dirname(ShapeNetCoreV2.__file__), cfg['obj_ids'], 'models', 'model_normalized.obj')
-    mesh_original = utils_mesh._as_mesh(trimesh.load(obj_path))
-
-    # In Shapenet, the front is the -Z axis with +Y still being the up axis. 
-    # Rotate objects to align with the canonical axis. 
-    mesh = utils_mesh.shapenet_rotate(mesh_original)
+    """
+    root_dir = os.path.expanduser(cfg['root_dir'])
+    obj_ids = cfg['obj_ids']
+    sample_id = obj_ids if isinstance(obj_ids, str) else obj_ids[0]
+    pair_file = os.path.join(root_dir, '3_pair', 'tmatrix', sample_id + '.json')
+    with open(pair_file) as f:
+        pair_data = json.load(f)
+    mesh_path = os.path.join(root_dir, pair_data['sfm_mesh_file'])
+    mesh = utils_mesh._as_mesh(trimesh.load(mesh_path))
 
     # Sample on the object surface
     samples = np.array(trimesh.sample.sample_surface(mesh, 10000)[0])
 
-    # Infer object bounding box and collect samples on the surface of the objects when the x-axis is lower than a certain threshold t.
-    # This is to simulate a partial point cloud.
+    # Visible bounding box: keep samples where each axis is below the given ratio (simulates partial view).
     t = [cfg['x_axis_ratio_bbox'], cfg['y_axis_ratio_bbox'], cfg['z_axis_ratio_bbox']]
-
     v_min, v_max = mesh.bounds
-
     for i in range(3):
         t_max = v_min[i] + t[i] * (v_max[i] - v_min[i])
         samples = samples[samples[:, i] < t_max]
-    
     return samples
 
 

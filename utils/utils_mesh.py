@@ -149,12 +149,12 @@ def load_mesh_touch(obj):
     return verts, faces
 
 
-def shapenet_rotate(mesh_original):
-    '''In Shapenet, the front is the -Z axis with +Y still being the up axis. This function rotates the object to align with the canonical reference frame.
+def canonical_rotate(mesh_original):
+    '''Rotate mesh so that the front is the +X axis and +Y is the up axis (canonical reference frame).
     Args:
-        mesh_original: trimesh.Trimesh(), mesh from ShapeNet
+        mesh_original: trimesh.Trimesh()
     Returns:
-        mesh: trimesh.Trimesh(), rotate mesh so that the front is the +X axis and +Y is the up axis.
+        mesh: trimesh.Trimesh(), rotated mesh.
     '''
     verts_original = np.array(mesh_original.vertices)
 

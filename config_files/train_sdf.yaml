@@ -1,6 +1,6 @@
 # Config file for training SDF model
 
-dataset: 'ShapeNetCore'   # Dataset used
+dataset: 'Potato'   # Dataset used (run data/extract_sdf.py first to create results/samples_dict_Potato.npy)
 seed: 42   # Seed for reproducibility
 
 # training
