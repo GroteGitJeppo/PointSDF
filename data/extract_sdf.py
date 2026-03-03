@@ -3,16 +3,12 @@ import json
 import numpy as np
 import results
 import os
+from pathlib import Path
 from utils import utils_mesh
 import point_cloud_utils as pcu
 import config_files
 import yaml
 import trimesh
-"""
-For each object, sample points and store their distance to the nearest triangle.
-Sampling follows the approach used in the DeepSDF paper.
-Uses 3DPotatoTwin dataset: root_dir, splits_csv, pair JSONs and meshes.
-"""
 
 
 def combine_sample_latent(samples, latent_class):
@@ -133,18 +129,28 @@ def _extract_3dpotatotwin(cfg):
     return samples_dict, idx_str2int_dict, idx_int2str_dict
 
 
-def main(cfg):
+def main(cfg, results_dir=None):
     samples_dict, idx_str2int_dict, idx_int2str_dict = _extract_3dpotatotwin(cfg)
 
-    results_dir = os.path.dirname(results.__file__)
+    if results_dir is None:
+        results_dir = os.path.dirname(results.__file__)
     np.save(os.path.join(results_dir, f'samples_dict_{cfg["dataset"]}.npy'), samples_dict)
     np.save(os.path.join(results_dir, 'idx_str2int_dict.npy'), idx_str2int_dict)
     np.save(os.path.join(results_dir, 'idx_int2str_dict.npy'), idx_int2str_dict)
 
 
 if __name__=='__main__':
-    cfg_path = os.path.join(os.path.dirname(config_files.__file__), 'extract_sdf.yaml')
-    with open(cfg_path, 'rb') as f:
-        cfg = yaml.load(f, Loader=yaml.FullLoader)
+    current_file = Path(__file__).resolve()
+    project_root = current_file.parent.parent
+    data_folder = os.path.join(project_root, "data")
+    splits_csv = os.path.join(data_folder, "splits.csv")
+    resultsfolder = os.path.join(project_root, "results")
+    os.makedirs(resultsfolder, exist_ok=True)
 
-    main(cfg)
+    config_path = os.path.join(project_root, "config_files", "extract_sdf.yaml")
+    with open(config_path, 'rb') as f:
+        cfg = yaml.load(f, Loader=yaml.FullLoader)
+    cfg['root_dir'] = data_folder
+    cfg['splits_csv'] = splits_csv
+
+    main(cfg, results_dir=resultsfolder)

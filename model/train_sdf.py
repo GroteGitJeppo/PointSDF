@@ -7,6 +7,8 @@ from torch.utils.data import DataLoader
 import results.runs_sdf as runs
 from utils.utils_deepsdf import SDFLoss_multishape
 import os
+import random
+from pathlib import Path
 from datetime import datetime
 import numpy as np
 import time
@@ -16,19 +18,18 @@ from torch.utils.tensorboard import SummaryWriter
 import yaml
 import config_files
 
-# Select device. The 'mps' device (macOS M1 architecture) is not supported as it cannot currently handle weith normalisation. 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f'Device: {device}')
 
 class Trainer():
-    def __init__(self, train_cfg):
+    def __init__(self, train_cfg, resultsfolder):
         self.train_cfg = train_cfg
+        self.resultsfolder = resultsfolder
 
     def __call__(self):
-        # directories
-        self.timestamp_run = datetime.now().strftime('%d_%m_%H%M%S')   # timestamp to use for logging data
-        self.runs_dir = os.path.dirname(runs.__file__)               # directory fo all runs
-        self.run_dir = os.path.join(self.runs_dir, self.timestamp_run)  # directory for this run
+        self.timestamp_run = datetime.now().strftime('%d_%m_%H%M%S')
+        self.runs_dir = os.path.join(self.resultsfolder, 'runs_sdf')
+        self.run_dir = os.path.join(self.runs_dir, self.timestamp_run)
         if not os.path.exists(self.run_dir):
             os.makedirs(self.run_dir)
         
@@ -39,7 +40,7 @@ class Trainer():
             yaml.dump(self.train_cfg, f)
 
         # calculate num objects in samples_dictionary, wich is the number of keys
-        samples_dict_path = os.path.join(os.path.dirname(results.__file__), f'samples_dict_{train_cfg["dataset"]}.npy')
+        samples_dict_path = os.path.join(self.resultsfolder, f'samples_dict_{self.train_cfg["dataset"]}.npy')
         samples_dict = np.load(samples_dict_path, allow_pickle=True).item()
 
         # instantiate model and optimisers
@@ -120,7 +121,7 @@ class Trainer():
         print(f'Time elapsed: {end - start} s')
 
     def get_loaders(self):
-        data = dataset.SDFDataset(self.train_cfg['dataset'])
+        data = dataset.SDFDataset(self.train_cfg['dataset'], results_folder=self.resultsfolder)
 
         if self.train_cfg['clamp']:
             data.data['sdf'] = torch.clamp(data.data['sdf'], -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
@@ -227,9 +228,22 @@ class Trainer():
         return avg_val_loss
 
 if __name__=='__main__':
-    train_cfg_path = os.path.join(os.path.dirname(config_files.__file__), 'train_sdf.yaml')
-    with open(train_cfg_path, 'rb') as f:
+    torch.manual_seed(133)
+    random.seed(133)
+    np.random.seed(133)
+
+    current_file = Path(__file__).resolve()
+    project_root = current_file.parent.parent
+    data_folder = os.path.join(project_root, "data")
+    splits_csv = os.path.join(data_folder, "splits.csv")
+    weightsfolder = os.path.join(project_root, "weights")
+    resultsfolder = os.path.join(project_root, "results")
+    os.makedirs(weightsfolder, exist_ok=True)
+    os.makedirs(resultsfolder, exist_ok=True)
+
+    config_path = os.path.join(project_root, "config_files", "train_sdf.yaml")
+    with open(config_path, 'rb') as f:
         train_cfg = yaml.load(f, Loader=yaml.FullLoader)
 
-    trainer = Trainer(train_cfg)
+    trainer = Trainer(train_cfg, resultsfolder)
     trainer()
