@@ -6,7 +6,7 @@ extracts a mesh via marching cubes, scales it back to real-world metres and
 computes the same metrics as pointcraft:
 
     - Chamfer Distance (mm)
-    - F-score @ 5 mm and @ 10 mm  (requires kaolin; NaN otherwise)
+    - F-score, Precision, Recall @ 5 mm and @ 10 mm  (F-score requires kaolin; NaN otherwise)
     - Predicted volume (mL, trimesh)
     - GT volume from ground_truth.csv
     - Per-sample inference time (ms)
@@ -138,6 +138,28 @@ def _fscore(pred_pts: np.ndarray, gt_pts: np.ndarray):
     return f5, f10
 
 
+def _precision_recall(pred_pts: np.ndarray, gt_pts: np.ndarray,
+                      threshold_m: float):
+    """
+    Precision and Recall at a given distance threshold.
+
+    pred_pts and gt_pts must be in metres (consistent with vertices_m produced
+    by  vertices_m = vertices_norm * scale + center).
+    threshold_m is therefore also in metres — 5 mm = 5e-3, 10 mm = 1e-2 —
+    matching the convention already used by _fscore (kaolin radius=5e-3 / 1e-2).
+
+    Returns dimensionless ratios in [0, 1]:
+        precision  = fraction of pred points whose nearest GT point is < threshold
+        recall     = fraction of GT points whose nearest pred point is < threshold
+    """
+    from scipy.spatial import cKDTree
+    d_pred, _ = cKDTree(gt_pts).query(pred_pts)
+    d_gt,   _ = cKDTree(pred_pts).query(gt_pts)
+    precision = float(np.mean(d_pred < threshold_m))
+    recall    = float(np.mean(d_gt   < threshold_m))
+    return precision, recall
+
+
 def _mesh_volume_ml(vertices: np.ndarray, faces: np.ndarray) -> float:
     """Volume of a mesh in mL (m³ × 1e6). Returns NaN if not watertight."""
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
@@ -233,6 +255,8 @@ def main(cfg: dict):
     cd_list = []
     f5_list = []
     f10_list = []
+    prec5_list,  rec5_list  = [], []
+    prec10_list, rec10_list = [], []
     vol_gt_list = []
     vol_pred_list = []
     time_list = []
@@ -279,6 +303,10 @@ def main(cfg: dict):
             cd_list.append(float("nan"))
             f5_list.append(float("nan"))
             f10_list.append(float("nan"))
+            prec5_list.append(float("nan"))
+            rec5_list.append(float("nan"))
+            prec10_list.append(float("nan"))
+            rec10_list.append(float("nan"))
             vol_gt_list.append(gt_df.loc[label, "volume_metashape"] if label in gt_df.index else float("nan"))
             vol_pred_list.append(float("nan"))
             time_list.append(inf_ms)
@@ -306,9 +334,12 @@ def main(cfg: dict):
         if gt_pts is not None:
             cd = _chamfer_mm(pred_pts, gt_pts)
             f5, f10 = _fscore(pred_pts, gt_pts)
+            prec5,  rec5  = _precision_recall(pred_pts, gt_pts, 5e-3)
+            prec10, rec10 = _precision_recall(pred_pts, gt_pts, 1e-2)
         else:
             cd = float("nan")
             f5, f10 = float("nan"), float("nan")
+            prec5 = rec5 = prec10 = rec10 = float("nan")
 
         # ---- Volume -------------------------------------------------- #
         vol_pred = _mesh_volume_ml(vertices_m, faces)
@@ -322,6 +353,10 @@ def main(cfg: dict):
         cd_list.append(cd)
         f5_list.append(f5)
         f10_list.append(f10)
+        prec5_list.append(prec5)
+        rec5_list.append(rec5)
+        prec10_list.append(prec10)
+        rec10_list.append(rec10)
         vol_gt_list.append(vol_gt)
         vol_pred_list.append(vol_pred)
         time_list.append(inf_ms)
@@ -339,7 +374,13 @@ def main(cfg: dict):
     vol_pred_arr = np.array(vol_pred_list, dtype=np.float32)
     time_arr = np.array(time_list, dtype=np.float32)
 
-    _print_report("PointSDF", cd_arr, f_arr, vol_gt_arr, vol_pred_arr, time_arr)
+    prec5_arr  = np.array(prec5_list,  dtype=np.float32)
+    rec5_arr   = np.array(rec5_list,   dtype=np.float32)
+    prec10_arr = np.array(prec10_list, dtype=np.float32)
+    rec10_arr  = np.array(rec10_list,  dtype=np.float32)
+
+    _print_report("PointSDF", cd_arr, f_arr, prec5_arr, rec5_arr,
+                  prec10_arr, rec10_arr, vol_gt_arr, vol_pred_arr, time_arr)
 
     # ------------------------------------------------------------------ #
     # Save CSV                                                             #
@@ -350,7 +391,11 @@ def main(cfg: dict):
         "inference_time_ms": time_arr,
         "chamfer_distance_mm": cd_arr,
         "fscore_5mm": f_arr[:, 0],
+        "precision_5mm": prec5_arr,
+        "recall_5mm": rec5_arr,
         "fscore_10mm": f_arr[:, 1],
+        "precision_10mm": prec10_arr,
+        "recall_10mm": rec10_arr,
         "volume_gt_ml": vol_gt_arr,
         "volume_pred_ml": vol_pred_arr,
         "volume_diff_ml": vol_diff,
@@ -361,19 +406,23 @@ def main(cfg: dict):
     print(f"\nResults saved to {out_path}")
 
 
-def _print_report(model_name, cd, fscores, volumes_gt, volumes_pred, exec_times):
+def _print_report(model_name, cd, fscores, prec5, rec5, prec10, rec10,
+                  volumes_gt, volumes_pred, exec_times):
     from sklearn.metrics import mean_absolute_error, root_mean_squared_error, r2_score
 
     print()
     print(f"Model: {model_name}")
     if np.any(np.isfinite(cd)):
         print(f"Mean Chamfer distance: {np.nanmean(cd):.1f} mm")
-        print(f"Mean F-score @ 5 mm:  {np.nanmean(fscores[:, 0]):.2f}")
-        print(f"Mean F-score @ 10 mm: {np.nanmean(fscores[:, 1]):.2f}")
+        print(f"Mean F-score    @ 5 mm:  {np.nanmean(fscores[:, 0]):.4f}")
+        print(f"Mean Precision  @ 5 mm:  {np.nanmean(prec5):.4f}")
+        print(f"Mean Recall     @ 5 mm:  {np.nanmean(rec5):.4f}")
+        print(f"Mean F-score    @ 10 mm: {np.nanmean(fscores[:, 1]):.4f}")
+        print(f"Mean Precision  @ 10 mm: {np.nanmean(prec10):.4f}")
+        print(f"Mean Recall     @ 10 mm: {np.nanmean(rec10):.4f}")
     else:
         print("Mean Chamfer distance: N/A")
-        print("Mean F-score @ 5 mm:  N/A")
-        print("Mean F-score @ 10 mm: N/A")
+        print("Mean F-score / Precision / Recall: N/A")
 
     valid = np.isfinite(volumes_gt) & np.isfinite(volumes_pred)
     if np.any(valid):
