@@ -2,7 +2,7 @@
 # Produces the same metrics as pointcraft (CD mm, F-score, volume MAE/RMSE/R2)
 # Run: python scripts/test.py
 
-folder_sdf: '17_07_172540'        # Run folder under results/runs_sdf (set to your trained run)
+folder_sdf: '16_03_162024'        # Run folder under results/runs_sdf (set to your trained run)
 root_dir: '/path/to/3DPotatoTwin' # 3DPotatoTwin dataset root (for loading GT meshes)
 
 # Mesh extraction

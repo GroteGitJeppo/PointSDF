@@ -38,7 +38,6 @@ sys.path.insert(0, str(_ROOT))
 import config_files
 import model.model_sdf as sdf_model
 import model.encoder_pointnet2 as encoder_module
-from results import runs_sdf
 from utils import utils_deepsdf, utils_mesh
 
 warnings.filterwarnings("ignore")
@@ -200,7 +199,7 @@ def main(cfg: dict):
     # ------------------------------------------------------------------ #
     # Paths                                                                #
     # ------------------------------------------------------------------ #
-    runs_dir = os.path.dirname(runs_sdf.__file__)
+    runs_dir = os.path.join(_ROOT, "results", "runs_sdf")
     run_dir = os.path.join(runs_dir, cfg["folder_sdf"])
     root_dir = os.path.expanduser(cfg["root_dir"])
 
