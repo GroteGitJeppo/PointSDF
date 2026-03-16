@@ -7,7 +7,8 @@ seed: 42   # Seed for reproducibility
 epochs: 300
 lr_model: 0.00001   # Initial learning rate (model)
 lr_latent: 0.001    # Initial learning rate (latent vector)
-batch_size: 16
+samples_per_shape: 8192   # SDF points to subsample per shape per step (corepp-style)
+batch_split: 1   # Chunk one shape's points into this many forward passes, then one optimizer step (use >1 if OOM)
 sigma_regulariser: 0.01   # Sigma value as regulariser in the loss function
 loss_multiplier: 1   # Loss multiplier
 clamp: true  # Clip the network prediction

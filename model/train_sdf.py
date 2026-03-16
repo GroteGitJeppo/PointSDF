@@ -1,8 +1,8 @@
+import csv
 import torch
 import model.model_sdf as sdf_model
 import torch.optim as optim
 import data.dataset_sdf as dataset
-from torch.utils.data import random_split
 from torch.utils.data import DataLoader
 import results.runs_sdf as runs
 from utils.utils_deepsdf import SDFLoss_multishape
@@ -23,9 +23,10 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f'Device: {device}')
 
 class Trainer():
-    def __init__(self, train_cfg, resultsfolder):
+    def __init__(self, train_cfg, resultsfolder, splits_csv):
         self.train_cfg = train_cfg
         self.resultsfolder = resultsfolder
+        self.splits_csv = splits_csv
 
     def __call__(self):
         self.timestamp_run = datetime.now().strftime('%d_%m_%H%M%S')
@@ -120,111 +121,119 @@ class Trainer():
         end = time.time()
         print(f'Time elapsed: {end - start} s')
 
+    def _get_split_indices(self):
+        idx_str2int = np.load(os.path.join(self.resultsfolder, 'idx_str2int_dict.npy'), allow_pickle=True).item()
+        with open(self.splits_csv, newline='') as f:
+            rows = list(csv.DictReader(f))
+        train_indices = [idx_str2int[row['label'].strip()] for row in rows if row.get('split', '').strip() == 'train' and row['label'].strip() in idx_str2int]
+        val_indices = [idx_str2int[row['label'].strip()] for row in rows if row.get('split', '').strip() == 'val' and row['label'].strip() in idx_str2int]
+        return train_indices, val_indices
+
     def get_loaders(self):
-        data = dataset.SDFDataset(self.train_cfg['dataset'], results_folder=self.resultsfolder)
-
-        if self.train_cfg['clamp']:
-            data.data['sdf'] = torch.clamp(data.data['sdf'], -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
-
-        train_size = int(0.85 * len(data))
-        val_size = len(data) - train_size
-        train_data, val_data = random_split(data, [train_size, val_size])
-        train_loader = DataLoader(
-                train_data,
-                batch_size=self.train_cfg['batch_size'],
-                shuffle=True,
-                drop_last=True
-            )
-        val_loader = DataLoader(
-            val_data,
-            batch_size=self.train_cfg['batch_size'],
-            shuffle=False,
-            drop_last=True
-            )
+        train_indices, val_indices = self._get_split_indices()
+        full_data = dataset.SDFDatasetPerShape(self.train_cfg['dataset'], results_folder=self.resultsfolder)
+        train_data = dataset.SDFDatasetPerShape(self.train_cfg['dataset'], results_folder=self.resultsfolder, indices=train_indices)
+        val_data = dataset.SDFDatasetPerShape(self.train_cfg['dataset'], results_folder=self.resultsfolder, indices=val_indices)
+        train_loader = DataLoader(train_data, batch_size=1, shuffle=True)
+        val_loader = DataLoader(val_data, batch_size=1, shuffle=False)
         return train_loader, val_loader
 
-    def generate_xy(self, batch):
-        """
-        Combine latent code and coordinates.
-        Return:
-            - x: latent codes + coordinates, torch tensor shape (batch_size, latent_size + 3)
-            - y: ground truth sdf, shape (batch_size, 1)
-            - latent_codes_indices_batch: all latent class indices per sample, shape (batch size, 1).
-                                            e.g. [[2], [2], [1], ..] eaning the batch contains the 2nd, 2nd, 1st latent code
-            - latent_batch_codes: all latent codes per sample, shape (batch_size, latent_size)
-        Return ground truth as y, and the latent codes for this batch.
-        """
-        latent_classes_batch = batch[0][:, 0].view(-1, 1).to(torch.long)               # shape (batch_size, 1)
-        coords = batch[0][:, 1:]                                  # shape (batch_size, 3)
-        latent_codes_batch = self.latent_codes[latent_classes_batch.view(-1)]    # shape (batch_size, 128)
-
-        x = torch.hstack((latent_codes_batch, coords))                  # shape (batch_size, 131)
-        y = batch[1]     # (batch_size, 1)
-
-        return x, y, latent_classes_batch.view(-1), latent_codes_batch
+    def generate_xy_per_shape(self, samples_latent_class, sdf, obj_idx):
+        """Build network input and target for one shape's points. samples_latent_class: (N, 4), sdf: (N, 1)."""
+        n = samples_latent_class.shape[0]
+        latent = self.latent_codes[obj_idx].unsqueeze(0).expand(n, -1).to(device)
+        coords = samples_latent_class[:, 1:].to(device)
+        x = torch.hstack((latent, coords))
+        y = sdf.to(device)
+        if y.dim() == 1:
+            y = y.unsqueeze(1)
+        return x, y, latent
 
     def train(self, train_loader):
         total_loss = 0.0
-        iterations = 0.0
+        num_shapes = 0
         self.model.train()
-        for batch in tqdm(train_loader, desc=f"Train Epoch {self.epoch}", leave=False, unit="batch"):
-            # batch[0]: [class, x, y, z], shape: (batch_size, 4)
-            # batch[1]: [sdf], shape: (batch size)
-            iterations += 1.0
+        samples_per_shape = self.train_cfg['samples_per_shape']
+        batch_split = self.train_cfg.get('batch_split', 1)
+        for batch in tqdm(train_loader, desc=f"Train Epoch {self.epoch}", leave=False, unit="shape"):
+            samples_latent_class = batch[0].squeeze(0).to(device)
+            sdf = batch[1].squeeze(0).to(device)
+            obj_idx = batch[2].squeeze(0).item() if batch[2].dim() > 0 else int(batch[2].item())
+            n_pts = samples_latent_class.shape[0]
+            if n_pts == 0:
+                continue
+            num_sub = min(samples_per_shape, n_pts)
+            idx = torch.randperm(n_pts, device=samples_latent_class.device)[:num_sub]
+            samples_latent_class = samples_latent_class[idx]
+            sdf = sdf[idx]
+            if self.train_cfg['clamp']:
+                sdf = torch.clamp(sdf, -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
+            if sdf.dim() == 1:
+                sdf = sdf.unsqueeze(1)
+            num_sdf_samples = samples_latent_class.shape[0]
 
             self.optimizer_model.zero_grad()
             self.optimizer_latent.zero_grad()
 
-            x, y, latent_codes_indices_batch, latent_codes_batch = self.generate_xy(batch)
-
-            predictions = self.model(x)  # (batch_size, 1)
-            if self.train_cfg['clamp']:
-                predictions = torch.clamp(predictions, -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
-            
-            loss_value, loss_rec, loss_latent = self.train_cfg['loss_multiplier'] * SDFLoss_multishape(y, predictions, x[:, :self.train_cfg['latent_size']], sigma=self.train_cfg['sigma_regulariser'])
-            loss_value.backward()       
-
+            chunks_x = torch.chunk(samples_latent_class, batch_split)
+            chunks_sdf = torch.chunk(sdf, batch_split)
+            for sc, sy in zip(chunks_x, chunks_sdf):
+                x, y, latent_batch = self.generate_xy_per_shape(sc, sy, obj_idx)
+                predictions = self.model(x)
+                if self.train_cfg['clamp']:
+                    predictions = torch.clamp(predictions, -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
+                loss_value, _, _ = self.train_cfg['loss_multiplier'] * SDFLoss_multishape(y, predictions, x[:, :self.train_cfg['latent_size']], sigma=self.train_cfg['sigma_regulariser'])
+                (loss_value / batch_split).backward()
             self.optimizer_latent.step()
             self.optimizer_model.step()
-            total_loss += loss_value.data.cpu().numpy()  
+            total_loss += loss_value.detach().cpu().numpy()
+            num_shapes += 1
 
-        avg_train_loss = total_loss/iterations
+        avg_train_loss = total_loss / num_shapes if num_shapes else 0.0
         print(f'Training: loss {avg_train_loss}')
         self.writer.add_scalar('Training loss', avg_train_loss, self.epoch)
-
         return avg_train_loss
 
     def validate(self, val_loader):
         total_loss = 0.0
         total_loss_rec = 0.0
         total_loss_latent = 0.0
-        iterations = 0.0
+        num_shapes = 0
         self.model.eval()
+        samples_per_shape = self.train_cfg['samples_per_shape']
 
-        for batch in tqdm(val_loader, desc="Validation", leave=False, unit="batch"):
-            # batch[0]: [class, x, y, z], shape: (batch_size, 4)
-            # batch[1]: [sdf], shape: (batch size)
-            iterations += 1.0            
-
-            x, y, _, latent_codes_batch = self.generate_xy(batch)
-
-            predictions = self.model(x)  # (batch_size, 1)
-            if train_cfg['clamp']:
-                predictions = torch.clamp(predictions, -train_cfg['clamp_value'], train_cfg['clamp_value'])
-
-            loss_value, loss_rec, loss_latent = self.train_cfg['loss_multiplier'] * SDFLoss_multishape(y, predictions, latent_codes_batch, self.train_cfg['sigma_regulariser'])          
-            total_loss += loss_value.data.cpu().numpy()   
-            total_loss_rec += loss_rec.data.cpu().numpy() 
+        for batch in tqdm(val_loader, desc="Validation", leave=False, unit="shape"):
+            samples_latent_class = batch[0].squeeze(0).to(device)
+            sdf = batch[1].squeeze(0).to(device)
+            obj_idx = batch[2].squeeze(0).item() if batch[2].dim() > 0 else int(batch[2].item())
+            n_pts = samples_latent_class.shape[0]
+            if n_pts == 0:
+                continue
+            num_sub = min(samples_per_shape, n_pts)
+            idx = torch.randperm(n_pts, device=samples_latent_class.device)[:num_sub]
+            samples_latent_class = samples_latent_class[idx]
+            sdf = sdf[idx]
+            if self.train_cfg['clamp']:
+                sdf = torch.clamp(sdf, -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
+            if sdf.dim() == 1:
+                sdf = sdf.unsqueeze(1)
+            x, y, latent_batch = self.generate_xy_per_shape(samples_latent_class, sdf, obj_idx)
+            predictions = self.model(x)
+            if self.train_cfg['clamp']:
+                predictions = torch.clamp(predictions, -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
+            loss_value, loss_rec, loss_latent = self.train_cfg['loss_multiplier'] * SDFLoss_multishape(y, predictions, latent_batch, sigma=self.train_cfg['sigma_regulariser'])
+            total_loss += loss_value.data.cpu().numpy()
+            total_loss_rec += loss_rec.data.cpu().numpy()
             total_loss_latent += loss_latent.data.cpu().numpy()
+            num_shapes += 1
 
-        avg_val_loss = total_loss/iterations
-        avg_loss_rec = total_loss_rec/iterations
-        avg_loss_latent = total_loss_latent/iterations
+        avg_val_loss = total_loss / num_shapes if num_shapes else 0.0
+        avg_loss_rec = total_loss_rec / num_shapes if num_shapes else 0.0
+        avg_loss_latent = total_loss_latent / num_shapes if num_shapes else 0.0
         print(f'Validation: loss {avg_val_loss}')
         self.writer.add_scalar('Validation loss', avg_val_loss, self.epoch)
         self.writer.add_scalar('Reconstruction loss', avg_loss_rec, self.epoch)
         self.writer.add_scalar('Latent code loss', avg_loss_latent, self.epoch)
-
         return avg_val_loss
 
 if __name__=='__main__':
@@ -245,5 +254,5 @@ if __name__=='__main__':
     with open(config_path, 'rb') as f:
         train_cfg = yaml.load(f, Loader=yaml.FullLoader)
 
-    trainer = Trainer(train_cfg, resultsfolder)
+    trainer = Trainer(train_cfg, resultsfolder, splits_csv)
     trainer()

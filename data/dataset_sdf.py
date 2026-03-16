@@ -34,6 +34,40 @@ class SDFDataset(Dataset):
         sdf = self.data['sdf'][idx]
         return latent_class, sdf
 
+
+class SDFDatasetPerShape(Dataset):
+    """
+    One item per shape. Optionally restricted to a list of shape indices (for train/val split).
+    Caller subsamples points per shape; this dataset returns full per-shape data.
+    """
+    def __init__(self, dataset_name, results_folder=None, indices=None):
+        if results_folder is None:
+            results_folder = os.path.dirname(results.__file__)
+        samples_dict = np.load(os.path.join(results_folder, f'samples_dict_{dataset_name}.npy'), allow_pickle=True).item()
+        self.samples_dict = {}
+        for obj_idx in list(samples_dict.keys()):
+            sdf = torch.from_numpy(samples_dict[obj_idx]['sdf']).float()
+            if sdf.dim() == 1:
+                sdf = sdf.view(-1, 1)
+            samples_latent_class = torch.from_numpy(samples_dict[obj_idx]['samples_latent_class']).float()
+            if samples_latent_class.dim() == 1:
+                samples_latent_class = samples_latent_class.view(-1, 4)
+            self.samples_dict[obj_idx] = {
+                'sdf': sdf,
+                'samples_latent_class': samples_latent_class,
+            }
+        self.obj_indices = sorted(self.samples_dict.keys())
+        self.indices = indices if indices is not None else self.obj_indices
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, i):
+        obj_idx = self.indices[i]
+        sdf = self.samples_dict[obj_idx]['sdf']
+        samples_latent_class = self.samples_dict[obj_idx]['samples_latent_class']
+        return samples_latent_class, sdf, obj_idx
+
 if __name__=='__main__':
     dataset_name = "Potato"
     dataset = SDFDataset(dataset_name)
