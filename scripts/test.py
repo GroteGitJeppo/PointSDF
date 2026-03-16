@@ -202,6 +202,8 @@ def main(cfg: dict):
     runs_dir = os.path.join(_ROOT, "results", "runs_sdf")
     run_dir = os.path.join(runs_dir, cfg["folder_sdf"])
     root_dir = os.path.expanduser(cfg["root_dir"])
+    if not os.path.isabs(root_dir):
+        root_dir = os.path.join(_ROOT, root_dir)
 
     results_dir = os.path.join(_ROOT, "results")
     os.makedirs(results_dir, exist_ok=True)
