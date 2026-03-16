@@ -10,7 +10,6 @@ import point_cloud_utils as pcu
 import config_files
 import yaml
 import trimesh
-import open3d as o3d
 
 
 def combine_sample_latent(samples, latent_class):
@@ -26,9 +25,7 @@ def combine_sample_latent(samples, latent_class):
 
 
 def _load_pointcloud_for_center_scale(path, root_dir):
-    """Load point cloud from path (relative to root_dir or absolute). Returns (N, 3) numpy array.
-    Uses trimesh for .ply and other loadable formats. For .pcd, open3d may be needed.
-    """
+    """Load point cloud from path (relative to root_dir or absolute). Returns (N, 3) numpy array."""
     full_path = path if os.path.isabs(path) else os.path.join(root_dir, path)
     geom = trimesh.load(full_path)
     if isinstance(geom, trimesh.PointCloud):
@@ -40,25 +37,6 @@ def _load_pointcloud_for_center_scale(path, root_dir):
         return np.vstack(verts) if verts else np.zeros((0, 3))
     raise ValueError(f"Unsupported geometry type {type(geom)} from {full_path}")
 
-
-def _estimate_normals(pc: np.ndarray, knn: int = 30) -> np.ndarray:
-    """
-    Estimate per-point surface normals using Open3D PCA-based estimation.
-
-    Args:
-        pc:  (N, 3) float64 numpy array of point positions.
-        knn: number of nearest neighbours used for normal estimation.
-
-    Returns:
-        normals: (N, 3) float64 numpy array; zero vectors for degenerate points.
-    """
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(pc)
-    pcd.estimate_normals(
-        search_param=o3d.geometry.KDTreeSearchParamKNN(knn=knn)
-    )
-    pcd.orient_normals_consistent_tangent_plane(k=knn)
-    return np.asarray(pcd.normals, dtype=np.float64)
 
 
 def _sample_pointcloud(pc, num_points):
@@ -90,8 +68,6 @@ def _extract_3dpotatotwin(cfg):
     pair_folder = os.path.join(root_dir, '3_pair', 'tmatrix')
     split_filter = cfg.get('split')
     num_points = cfg.get('pointcloud_size', 2048)
-    use_normals = cfg.get('use_normals', True)
-    normal_knn = cfg.get('normal_knn', 30)
 
     with open(splits_csv, newline='') as f:
         reader = csv.DictReader(f)
@@ -171,19 +147,12 @@ def _extract_3dpotatotwin(cfg):
         partial_pc_normalized = (partial_pc - center) / scale
 
         # Sample/pad to fixed number of points for batching
-        partial_pc_fixed = _sample_pointcloud(partial_pc_normalized, num_points).astype(np.float32)
-
-        if use_normals:
-            normals_fixed = _estimate_normals(partial_pc_fixed.astype(np.float64), knn=normal_knn).astype(np.float32)
-            # Concatenate XYZ and normals into (N, 6)
-            pointcloud_out = np.hstack([partial_pc_fixed, normals_fixed])
-        else:
-            pointcloud_out = partial_pc_fixed  # (N, 3)
+        pointcloud_out = _sample_pointcloud(partial_pc_normalized, num_points).astype(np.float32)  # (N, 3)
 
         samples_dict[obj_idx] = {
             'sdf': sdf,
             'samples_latent_class': combine_sample_latent(p_total, np.array([obj_idx], dtype=np.int32)),
-            'pointcloud': pointcloud_out,          # shape (N, 3) or (N, 6)
+            'pointcloud': pointcloud_out,          # shape (N, 3)
             'center': center.astype(np.float32),   # (3,) in metres — needed to undo normalisation
             'scale': np.float32(scale),            # scalar in metres — needed to undo normalisation
         }

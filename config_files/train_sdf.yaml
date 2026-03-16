@@ -15,7 +15,6 @@ clamp_value: 0.1          # Clip range [-clamp_value, clamp_value]
 
 # Encoder settings
 encoder_dropout: 0.3      # Dropout probability in PointNet2 FC layers
-use_normals: true         # Use surface normals as extra per-point features (requires extract_sdf.py with use_normals:true)
 
 # Architecture (decoder)
 num_layers: 8             # Number of DeepSDF decoder layers

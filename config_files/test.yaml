@@ -21,4 +21,3 @@ patience: 50
 sigma_regulariser: 0.01
 clamp: true
 clamp_value: 0.1
-normal_knn: 30             # KNN for normal estimation (must match training setting)

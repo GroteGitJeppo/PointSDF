@@ -2,9 +2,9 @@
 Point cloud augmentation transforms for training.
 
 All transforms operate on a dict with keys:
-    - 'pointcloud': (N, 3) or (N, 6) float tensor  [xyz] or [xyz + normals]
-    - 'coords':     (M, 3) float tensor             [SDF query points]
-    - 'sdf':        (M, 1) float tensor             [SDF values]
+    - 'pointcloud': (N, 3) float tensor  [xyz]
+    - 'coords':     (M, 3) float tensor  [SDF query points]
+    - 'sdf':        (M, 1) float tensor  [SDF values]
 
 Transforms are designed to keep the pointcloud, coords, and sdf mutually
 consistent so that the decoder still sees correct supervision after augmentation.
@@ -30,22 +30,11 @@ class RandomRotationSO3:
     """
     Apply a uniformly random rotation from SO(3) to the point cloud and SDF
     query coordinates. SDF values are rotation-invariant and are unchanged.
-    If the point cloud has 6 channels (XYZ + normals), the normals are rotated
-    by the same matrix.
     """
 
     def __call__(self, pointcloud, coords, sdf):
         R = self._random_rotation(pointcloud.device)
-
-        xyz = pointcloud[:, :3]
-        xyz_rot = xyz @ R.T
-        if pointcloud.shape[1] == 6:
-            normals = pointcloud[:, 3:]
-            normals_rot = normals @ R.T
-            pointcloud = torch.cat([xyz_rot, normals_rot], dim=1)
-        else:
-            pointcloud = xyz_rot
-
+        pointcloud = pointcloud @ R.T
         coords = coords @ R.T
         return pointcloud, coords, sdf
 
@@ -61,8 +50,8 @@ class RandomRotationSO3:
 
 class RandomJitter:
     """
-    Add Gaussian noise to point cloud XYZ coordinates only (simulates sensor
-    noise). Does not modify normals, coords, or SDF values.
+    Add Gaussian noise to point cloud XYZ coordinates (simulates sensor
+    noise). Does not modify coords or SDF values.
 
     Args:
         sigma: standard deviation of the noise (default 0.01)

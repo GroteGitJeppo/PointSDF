@@ -10,9 +10,6 @@ x_axis_ratio_bbox: 1   # e.g. x_axis_ratio_bbox: 0.5, visible pointcloud in half
 y_axis_ratio_bbox: 0.5
 z_axis_ratio_bbox: 1
 
-# Normal estimation (must match the use_normals setting used during training)
-normal_knn: 30   # Number of neighbours for Open3D normal estimation at inference
-
 # Inference parameters
 max_inference_epochs: 300   # Max epochs for latent code refinement (warm-started from encoder)
 lr: 0.00001   # Learning rate for latent code refinement

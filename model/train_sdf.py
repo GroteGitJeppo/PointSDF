@@ -58,7 +58,6 @@ class Trainer():
         self.encoder = encoder_module.PointNet2Encoder(
             latent_size=self.train_cfg["latent_size"],
             dropout=self.train_cfg.get("encoder_dropout", 0.3),
-            use_normals=self.train_cfg.get("use_normals", False),
         ).float().to(device)
 
         self.model = sdf_model.SDFModel(

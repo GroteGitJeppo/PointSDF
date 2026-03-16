@@ -26,8 +26,6 @@ import yaml
 from utils import utils_mesh
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
-import open3d as o3d
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -97,21 +95,6 @@ def _normalise_pointcloud(pc: np.ndarray):
     return (pc - centre) / scale, centre, scale
 
 
-def _add_normals(pc: np.ndarray, knn: int = 30) -> np.ndarray:
-    """
-    Estimate surface normals with Open3D and return (N, 6) [XYZ + normals].
-    Falls back to zero normals if estimation fails.
-    """
-    try:
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(pc)
-        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamKNN(knn=knn))
-        pcd.orient_normals_consistent_tangent_plane(k=knn)
-        normals = np.asarray(pcd.normals, dtype=np.float32)
-    except Exception:
-        normals = np.zeros_like(pc, dtype=np.float32)
-    return np.hstack([pc.astype(np.float32), normals])
-
 
 def main(cfg):
     model_settings = read_params(cfg)
@@ -141,11 +124,9 @@ def main(cfg):
     model.eval()
 
     # Load encoder for warm start
-    use_normals = model_settings.get('use_normals', False)
     encoder = encoder_module.PointNet2Encoder(
         latent_size=model_settings['latent_size'],
         dropout=0.0,  # no dropout at inference
-        use_normals=use_normals,
     ).to(device)
     encoder.load_state_dict(checkpoint['encoder'])
     encoder.eval()
@@ -162,13 +143,7 @@ def main(cfg):
     # Save partial point cloud
     np.save(os.path.join(inference_dir, 'partial_pointcloud.npy'), pointcloud_norm)
 
-    # Optionally add normals as features
-    if use_normals:
-        pointcloud_feat = _add_normals(pointcloud_norm, knn=cfg.get('normal_knn', 30))
-    else:
-        pointcloud_feat = pointcloud_norm.astype(np.float32)
-
-    pointcloud_tensor = torch.tensor(pointcloud_feat, dtype=torch.float32).unsqueeze(0).to(device)
+    pointcloud_tensor = torch.tensor(pointcloud_norm.astype(np.float32), dtype=torch.float32).unsqueeze(0).to(device)
 
     # Phase 1: encoder warm start (single forward pass)
     with torch.no_grad():

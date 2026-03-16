@@ -81,16 +81,14 @@ def _load_weights(run_dir: str, model_settings: dict):
     decoder.load_state_dict(checkpoint["decoder"])
     decoder.eval()
 
-    use_normals = model_settings.get("use_normals", False)
     encoder = encoder_module.PointNet2Encoder(
         latent_size=model_settings["latent_size"],
         dropout=0.0,
-        use_normals=use_normals,
     ).to(device)
     encoder.load_state_dict(checkpoint["encoder"])
     encoder.eval()
 
-    return decoder, encoder, use_normals
+    return decoder, encoder
 
 
 def _sample_mesh_pts(vertices: np.ndarray, faces: np.ndarray,
@@ -194,7 +192,7 @@ def main(cfg: dict):
     with open(settings_path) as f:
         model_settings = yaml.load(f, Loader=yaml.FullLoader)
 
-    decoder, encoder, use_normals = _load_weights(run_dir, model_settings)
+    decoder, encoder = _load_weights(run_dir, model_settings)
 
     # ------------------------------------------------------------------ #
     # Load samples_dict and ground truth                                  #
@@ -221,7 +219,6 @@ def main(cfg: dict):
     resolution = cfg.get("resolution", 128)
     num_points_sample = cfg.get("num_points_sample", 10000)
     run_ref = cfg.get("run_refinement", False)
-    normal_knn = cfg.get("normal_knn", model_settings.get("normal_knn", 30))
 
     coords, grad_size_axis = utils_deepsdf.get_volume_coords(resolution)
     coords = coords.to(device)
