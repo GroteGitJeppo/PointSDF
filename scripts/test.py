@@ -221,13 +221,14 @@ def main(cfg: dict):
     data_dir = os.path.join(_ROOT, "data")
     samples_path = os.path.join(run_dir, "samples_dict_Potato.npy")
     if not os.path.exists(samples_path):
-        # fall back to the data directory (pre-split location)
-        samples_path = os.path.join(data_dir, "samples_dict_Potato.npy")
+        # fall back to the results directory (written there by extract_sdf.py)
+        samples_path = os.path.join(results_dir, "samples_dict_Potato.npy")
     samples_dict = np.load(samples_path, allow_pickle=True).item()
 
-    idx_str2int = np.load(
-        os.path.join(data_dir, "idx_str2int_dict.npy"), allow_pickle=True
-    ).item()
+    _idx_path = os.path.join(data_dir, "idx_str2int_dict.npy")
+    if not os.path.exists(_idx_path):
+        _idx_path = os.path.join(results_dir, "idx_str2int_dict.npy")
+    idx_str2int = np.load(_idx_path, allow_pickle=True).item()
 
     splits_df = pd.read_csv(os.path.join(data_dir, "splits.csv"))
     test_labels = splits_df[splits_df["split"] == "test"]["label"].tolist()
