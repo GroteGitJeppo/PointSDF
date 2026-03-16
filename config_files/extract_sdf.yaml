@@ -14,3 +14,5 @@ num_samples_in_volume: 3000   # Num samples within the entire unit volume (many 
 
 # Point cloud settings
 pointcloud_size: 2048   # Fixed number of points to store per object (sampled/padded to this size)
+use_normals: true       # Estimate surface normals; stores (N, 6) [XYZ + normals] instead of (N, 3)
+normal_knn: 30          # Number of nearest neighbours for normal estimation

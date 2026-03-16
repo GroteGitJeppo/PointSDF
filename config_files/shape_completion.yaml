@@ -6,16 +6,19 @@ obj_ids: 'sample_id_here'   # sample_id (single id or list; first is used for pa
 resolution: 256
 
 # Visible bounding box for shape completion
-x_axis_ratio_bbox: 1   # e.g. x_axis_ratio_bbox: 0.5, visible poincloud in half the object bounding box along the x-axis
+x_axis_ratio_bbox: 1   # e.g. x_axis_ratio_bbox: 0.5, visible pointcloud in half the object bounding box along the x-axis
 y_axis_ratio_bbox: 0.5
 z_axis_ratio_bbox: 1
 
+# Normal estimation (must match the use_normals setting used during training)
+normal_knn: 30   # Number of neighbours for Open3D normal estimation at inference
+
 # Inference parameters
-epochs: 10000   # Number of epochs for latent code inference"
-lr: 0.00001   # Learning rate for latent code inference
-lr_scheduler: True   
-lr_multiplier: 0.5   # Learning rate multiplier for the scheduler (if lr_scheduler: True)
-patience: 100   # Patience for latent code inference (if lr_scheduler: True)
+max_inference_epochs: 300   # Max epochs for latent code refinement (warm-started from encoder)
+lr: 0.00001   # Learning rate for latent code refinement
+lr_scheduler: True
+lr_multiplier: 0.5   # Learning rate multiplier for the scheduler
+patience: 50         # Patience for latent code refinement scheduler
 sigma_regulariser: 0.01   # Regulariser for the loss function
 clamp: True   # Clip the network prediction
 clamp_value: 0.1   # Clipping value

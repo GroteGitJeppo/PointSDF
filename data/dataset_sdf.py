@@ -12,9 +12,12 @@ class SDFDataset(Dataset):
     Dataset for the encoder-decoder SDF architecture.
 
     Each sample returns a triplet:
-        - pointcloud : (num_points, 3) float tensor  - encoder input for this object
-        - coords     : (3,)           float tensor  - 3D query point
-        - sdf        : (1,)           float tensor  - ground-truth SDF value
+        - pointcloud : (num_points, 3) or (num_points, 6) float tensor
+                       Encoder input for this object. Shape is (N, 3) when
+                       use_normals=False and (N, 6) [XYZ + normals] when
+                       use_normals=True in extract_sdf.py.
+        - coords     : (3,)  float tensor  - 3D query point
+        - sdf        : (1,)  float tensor  - ground-truth SDF value
 
     Memory layout: point clouds are stored ONCE per object (not tiled per SDF sample).
     A sample-to-object index mapping is used in __getitem__ to look up the correct
@@ -87,8 +90,13 @@ class SDFDataset(Dataset):
 class SDFDatasetPerShape(Dataset):
     """
     One item per shape for encoder-decoder per-sample training.
-    Returns (pointcloud, coords, sdf) for one shape; caller subsamples coords/sdf.
-    If "pointcloud" is in data use it, else use coords as fallback for the encoder.
+    Returns (pointcloud, coords, sdf, obj_idx) for one shape; caller subsamples coords/sdf.
+
+    pointcloud shape is (N, 3) when normals were not extracted, or (N, 6) [XYZ + normals]
+    when use_normals=True was set in extract_sdf.yaml. The tensor shape is preserved
+    exactly as stored in samples_dict.npy so no changes are needed here.
+
+    If "pointcloud" is absent from the stored dict, coords are used as a fallback.
     """
     def __init__(self, dataset_name, results_folder=None, indices=None):
         if results_folder is None:

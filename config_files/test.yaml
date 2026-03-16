@@ -1,0 +1,24 @@
+# Config file for PointSDF test evaluation
+# Produces the same metrics as pointcraft (CD mm, F-score, volume MAE/RMSE/R2)
+# Run: python scripts/test.py
+
+folder_sdf: '17_07_172540'        # Run folder under results/runs_sdf (set to your trained run)
+root_dir: '/path/to/3DPotatoTwin' # 3DPotatoTwin dataset root (for loading GT meshes)
+
+# Mesh extraction
+resolution: 128        # Marching cubes grid resolution (higher = more accurate volume, slower)
+
+# Metric computation
+num_points_sample: 10000   # Points sampled from predicted and GT meshes for CD / F-score
+
+# Inference mode
+run_refinement: false      # If true, run iterative latent refinement after encoder forward pass
+max_inference_epochs: 300  # Only used when run_refinement: true
+lr: 0.00001
+lr_scheduler: true
+lr_multiplier: 0.5
+patience: 50
+sigma_regulariser: 0.01
+clamp: true
+clamp_value: 0.1
+normal_knn: 30             # KNN for normal estimation (must match training setting)

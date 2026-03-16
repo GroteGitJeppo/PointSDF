@@ -1,11 +1,12 @@
 import csv
+import contextlib
 import torch
 import model.model_sdf as sdf_model
 import model.encoder_pointnet2 as encoder_module
 import torch.optim as optim
 import data.dataset_sdf as dataset
 from torch.utils.data import DataLoader
-from utils.utils_deepsdf import SDFLoss_multishape
+from utils.utils_deepsdf import SDFLoss_multishape, get_volume_coords, extract_mesh
 import os
 import random
 from pathlib import Path
@@ -17,6 +18,7 @@ import results
 from torch.utils.tensorboard import SummaryWriter
 import yaml
 import config_files
+from data.augmentation import build_augmentation
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}")
@@ -41,10 +43,22 @@ class Trainer():
         with open(self.log_path, "w") as f:
             yaml.dump(self.train_cfg, f)
 
+        # Augmentation pipeline (applied only during training)
+        if self.train_cfg.get("augmentation", False):
+            self.augmentation = build_augmentation(self.train_cfg)
+        else:
+            self.augmentation = None
+
+        # Mixed-precision scaler (no-op if disabled or on CPU)
+        use_amp = self.train_cfg.get("mixed_precision", False) and device.type == "cuda"
+        self.scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        self.autocast_ctx = torch.cuda.amp.autocast if use_amp else contextlib.nullcontext
+
         # Instantiate encoder (PointNet2) and decoder (DeepSDF)
         self.encoder = encoder_module.PointNet2Encoder(
             latent_size=self.train_cfg["latent_size"],
             dropout=self.train_cfg.get("encoder_dropout", 0.3),
+            use_normals=self.train_cfg.get("use_normals", False),
         ).float().to(device)
 
         self.model = sdf_model.SDFModel(
@@ -141,7 +155,7 @@ class Trainer():
     def generate_xy_per_shape(self, pointcloud, coords, sdf):
         """
         Encode one shape's point cloud and build decoder input/target for (coords, sdf).
-        pointcloud: (P, 3), coords: (N, 3), sdf: (N, 1).
+        pointcloud: (P, 3) or (P, 6), coords: (N, 3), sdf: (N, 1).
         Returns x (N, latent_size+3), y (N, 1), latent (N, latent_size).
         """
         pointcloud = pointcloud.to(device)
@@ -158,6 +172,20 @@ class Trainer():
         y = sdf
         return x, y, latent
 
+    @staticmethod
+    def _chamfer_distance(pred_pts: np.ndarray, gt_pts: np.ndarray) -> float:
+        """
+        Symmetric Chamfer Distance between two point clouds.
+        Uses cKDTree for efficient nearest-neighbour lookup.
+        Returns the mean squared CD (sum of both directions).
+        """
+        from scipy.spatial import cKDTree
+        tree_pred = cKDTree(pred_pts)
+        tree_gt = cKDTree(gt_pts)
+        d_pred_to_gt, _ = tree_gt.query(pred_pts, workers=-1)
+        d_gt_to_pred, _ = tree_pred.query(gt_pts, workers=-1)
+        return float(np.mean(d_pred_to_gt ** 2) + np.mean(d_gt_to_pred ** 2))
+
     def train(self, train_loader):
         total_loss = 0.0
         num_shapes = 0
@@ -165,10 +193,13 @@ class Trainer():
         self.encoder.train()
         samples_per_shape = self.train_cfg["samples_per_shape"]
         batch_split = self.train_cfg.get("batch_split", 1)
+        grad_accum_steps = max(1, self.train_cfg.get("grad_accumulation_steps", 1))
 
-        for batch in tqdm(
+        self.optimizer.zero_grad()
+
+        for shape_idx, batch in enumerate(tqdm(
             train_loader, desc=f"Train Epoch {self.epoch}", leave=False, unit="shape"
-        ):
+        )):
             pointcloud = batch[0].squeeze(0)
             coords = batch[1].squeeze(0)
             sdf = batch[2].squeeze(0)
@@ -188,31 +219,54 @@ class Trainer():
             if sdf.dim() == 1:
                 sdf = sdf.unsqueeze(1)
 
-            self.optimizer.zero_grad()
-            shape_loss = 0.0
-            chunks_coords = torch.chunk(coords, batch_split)
-            chunks_sdf = torch.chunk(sdf, batch_split)
-            for c_coords, c_sdf in zip(chunks_coords, chunks_sdf):
-                x, y, latent = self.generate_xy_per_shape(pointcloud, c_coords, c_sdf)
-                predictions = self.model(x)
+            # Apply augmentation to point cloud, coords, and sdf consistently
+            if self.augmentation is not None:
+                pointcloud, coords, sdf = self.augmentation(pointcloud, coords, sdf)
                 if self.train_cfg["clamp"]:
-                    predictions = torch.clamp(
-                        predictions,
+                    sdf = torch.clamp(
+                        sdf,
                         -self.train_cfg["clamp_value"],
                         self.train_cfg["clamp_value"],
                     )
-                loss_value, _, _ = SDFLoss_multishape(
-                    y,
-                    predictions,
-                    latent,
-                    sigma=self.train_cfg["sigma_regulariser"],
-                )
-                loss_value = self.train_cfg["loss_multiplier"] * loss_value / batch_split
-                loss_value.backward()
-                shape_loss += loss_value.detach().cpu().numpy() * batch_split
-            self.optimizer.step()
+
+            shape_loss = 0.0
+            chunks_coords = torch.chunk(coords, batch_split)
+            chunks_sdf = torch.chunk(sdf, batch_split)
+
+            for c_coords, c_sdf in zip(chunks_coords, chunks_sdf):
+                with self.autocast_ctx():
+                    x, y, latent = self.generate_xy_per_shape(pointcloud, c_coords, c_sdf)
+                    predictions = self.model(x)
+                    if self.train_cfg["clamp"]:
+                        predictions = torch.clamp(
+                            predictions,
+                            -self.train_cfg["clamp_value"],
+                            self.train_cfg["clamp_value"],
+                        )
+                    loss_value, _, _ = SDFLoss_multishape(
+                        y,
+                        predictions,
+                        latent,
+                        sigma=self.train_cfg["sigma_regulariser"],
+                    )
+                    # Divide by both batch_split and grad_accum_steps for correct scaling
+                    loss_value = (
+                        self.train_cfg["loss_multiplier"] * loss_value
+                        / (batch_split * grad_accum_steps)
+                    )
+                self.scaler.scale(loss_value).backward()
+                shape_loss += loss_value.detach().cpu().item() * batch_split * grad_accum_steps
+
             total_loss += shape_loss
             num_shapes += 1
+
+            # Optimizer step every grad_accum_steps shapes (or at the last shape)
+            is_accum_step = (shape_idx + 1) % grad_accum_steps == 0
+            is_last_batch = (shape_idx + 1) == len(train_loader)
+            if is_accum_step or is_last_batch:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.optimizer.zero_grad()
 
         avg_train_loss = total_loss / num_shapes if num_shapes else 0.0
         print(f"Training: loss {avg_train_loss:.6f}")
@@ -228,6 +282,18 @@ class Trainer():
         self.encoder.eval()
         samples_per_shape = self.train_cfg["samples_per_shape"]
 
+        # Chamfer Distance is computed every chamfer_val_freq epochs
+        chamfer_freq = self.train_cfg.get("chamfer_val_freq", 5)
+        compute_chamfer = (self.epoch % chamfer_freq == 0)
+        chamfer_resolution = self.train_cfg.get("chamfer_resolution", 40)
+        total_chamfer = 0.0
+        num_chamfer = 0
+
+        if compute_chamfer:
+            coords_cd, grid_size_cd = get_volume_coords(chamfer_resolution)
+            coords_cd = coords_cd.to(device)
+            coords_cd_batches = torch.split(coords_cd, 100000)
+
         for batch in tqdm(val_loader, desc="Validation", leave=False, unit="shape"):
             pointcloud = batch[0].squeeze(0)
             coords = batch[1].squeeze(0)
@@ -237,35 +303,58 @@ class Trainer():
                 continue
             num_sub = min(samples_per_shape, n_pts)
             idx = torch.randperm(n_pts, device=coords.device)[:num_sub]
-            coords = coords[idx]
-            sdf = sdf[idx]
+            coords_sub = coords[idx]
+            sdf_sub = sdf[idx]
             if self.train_cfg["clamp"]:
-                sdf = torch.clamp(
-                    sdf,
+                sdf_sub = torch.clamp(
+                    sdf_sub,
                     -self.train_cfg["clamp_value"],
                     self.train_cfg["clamp_value"],
                 )
-            if sdf.dim() == 1:
-                sdf = sdf.unsqueeze(1)
-            x, y, latent = self.generate_xy_per_shape(pointcloud, coords, sdf)
-            predictions = self.model(x)
-            if self.train_cfg["clamp"]:
-                predictions = torch.clamp(
+            if sdf_sub.dim() == 1:
+                sdf_sub = sdf_sub.unsqueeze(1)
+
+            with self.autocast_ctx():
+                x, y, latent = self.generate_xy_per_shape(pointcloud, coords_sub, sdf_sub)
+                predictions = self.model(x)
+                if self.train_cfg["clamp"]:
+                    predictions = torch.clamp(
+                        predictions,
+                        -self.train_cfg["clamp_value"],
+                        self.train_cfg["clamp_value"],
+                    )
+                loss_value, loss_rec, loss_latent_reg = SDFLoss_multishape(
+                    y,
                     predictions,
-                    -self.train_cfg["clamp_value"],
-                    self.train_cfg["clamp_value"],
+                    latent,
+                    sigma=self.train_cfg["sigma_regulariser"],
                 )
-            loss_value, loss_rec, loss_latent_reg = SDFLoss_multishape(
-                y,
-                predictions,
-                latent,
-                sigma=self.train_cfg["sigma_regulariser"],
-            )
-            loss_value = self.train_cfg["loss_multiplier"] * loss_value
+                loss_value = self.train_cfg["loss_multiplier"] * loss_value
+
             total_loss += loss_value.data.cpu().numpy()
             total_loss_rec += loss_rec.data.cpu().numpy()
             total_loss_latent += loss_latent_reg.data.cpu().numpy()
             num_shapes += 1
+
+            # Chamfer Distance: extract mesh from predicted SDF and compare to GT PC
+            if compute_chamfer:
+                try:
+                    latent_single = latent[0].unsqueeze(0)
+                    sdf_vol = torch.tensor([], dtype=torch.float32).view(0, 1).to(device)
+                    for cb in coords_cd_batches:
+                        lt = latent_single.expand(cb.shape[0], -1)
+                        inp = torch.hstack((lt, cb))
+                        sdf_vol = torch.vstack((sdf_vol, self.model(inp)))
+                    vertices, faces = extract_mesh(grid_size_cd, sdf_vol)
+                    import trimesh
+                    mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+                    pred_pts = np.array(trimesh.sample.sample_surface(mesh, 1000)[0])
+                    gt_pts = pointcloud[:, :3].cpu().numpy()
+                    cd = self._chamfer_distance(pred_pts, gt_pts)
+                    total_chamfer += cd
+                    num_chamfer += 1
+                except Exception:
+                    pass
 
         avg_val_loss = total_loss / num_shapes if num_shapes else 0.0
         avg_loss_rec = total_loss_rec / num_shapes if num_shapes else 0.0
@@ -274,6 +363,12 @@ class Trainer():
         self.writer.add_scalar("Validation loss", avg_val_loss, self.epoch)
         self.writer.add_scalar("Reconstruction loss", avg_loss_rec, self.epoch)
         self.writer.add_scalar("Latent code loss", avg_loss_latent, self.epoch)
+
+        if compute_chamfer and num_chamfer > 0:
+            avg_cd = total_chamfer / num_chamfer
+            print(f"Validation: Chamfer Distance {avg_cd:.6f}")
+            self.writer.add_scalar("Val/ChamferDistance", avg_cd, self.epoch)
+
         return avg_val_loss
 
 

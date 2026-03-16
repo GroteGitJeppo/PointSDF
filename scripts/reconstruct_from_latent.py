@@ -51,9 +51,9 @@ def main(cfg):
     weights = os.path.join(os.path.dirname(runs_sdf.__file__), cfg['folder_sdf'], 'weights.pt')
 
     model = sdf_model.SDFModel(
-        num_layers=training_settings['num_layers'], 
-        skip_connections=training_settings['latent_size'], 
-        latent_size=training_settings['latent_size'], 
+        num_layers=training_settings['num_layers'],
+        skip_connections=training_settings['skip_connections'],
+        latent_size=training_settings['latent_size'],
         inner_dim=training_settings['inner_dim']).to(device)
     model.load_state_dict(torch.load(weights, map_location=device))
    

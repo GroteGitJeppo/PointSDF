@@ -15,12 +15,33 @@ clamp_value: 0.1          # Clip range [-clamp_value, clamp_value]
 
 # Encoder settings
 encoder_dropout: 0.3      # Dropout probability in PointNet2 FC layers
+use_normals: true         # Use surface normals as extra per-point features (requires extract_sdf.py with use_normals:true)
 
 # Architecture (decoder)
 num_layers: 8             # Number of DeepSDF decoder layers
 inner_dim: 256            # Hidden dimension of the decoder
-latent_size: 64           # Latent vector size (encoder output / decoder input prefix)
+latent_size: 128          # Latent vector size (increased from 64 for richer shape representation)
 skip_connections: True    # Use skip connections in the decoder
+
+# Data augmentation (applied to encoder input point cloud during training)
+augmentation: true           # Enable point cloud augmentation
+aug_rotation: true           # Random SO(3) rotation (applied to pointcloud and coords)
+aug_jitter: true             # Gaussian noise on point cloud XYZ
+aug_jitter_sigma: 0.01       # Noise standard deviation
+aug_jitter_clip: 0.03        # Hard clip for jitter noise
+aug_dropout: true            # Random point dropout
+aug_dropout_ratio: 0.1       # Fraction of points to drop (10%)
+aug_scale: true              # Random isotropic scaling
+aug_scale_low: 0.9           # Lower bound of scale factor
+aug_scale_high: 1.1          # Upper bound of scale factor
+
+# Training efficiency
+mixed_precision: true         # Enable torch.cuda.amp for ~2-3x GPU speed-up (CUDA only)
+grad_accumulation_steps: 8    # Accumulate gradients over N shapes before each optimizer step
+
+# Chamfer Distance validation
+chamfer_val_freq: 5       # Compute Chamfer Distance every N epochs (0 to disable)
+chamfer_resolution: 40    # Grid resolution for mesh extraction during CD validation
 
 # LR scheduling
 lr_scheduler: True        # Enable learning rate scheduling
