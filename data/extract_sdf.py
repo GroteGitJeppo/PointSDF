@@ -40,11 +40,35 @@ def _load_pointcloud_for_center_scale(path, root_dir):
     raise ValueError(f"Unsupported geometry type {type(geom)} from {full_path}")
 
 
+def _sample_pointcloud(pc, num_points):
+    """Sample or pad a point cloud to a fixed number of points.
+
+    If the point cloud has more points than num_points, randomly subsample.
+    If it has fewer, randomly repeat points to pad.
+
+    Args:
+        pc: (N, 3) numpy array
+        num_points: target number of points
+
+    Returns:
+        (num_points, 3) numpy array
+    """
+    n = pc.shape[0]
+    if n == num_points:
+        return pc
+    if n > num_points:
+        idx = np.random.choice(n, num_points, replace=False)
+    else:
+        idx = np.random.choice(n, num_points, replace=True)
+    return pc[idx]
+
+
 def _extract_3dpotatotwin(cfg):
     root_dir = os.path.expanduser(cfg['root_dir'])
     splits_csv = os.path.expanduser(cfg['splits_csv'])
     pair_folder = os.path.join(root_dir, '3_pair', 'tmatrix')
     split_filter = cfg.get('split')
+    num_points = cfg.get('pointcloud_size', 2048)
 
     with open(splits_csv, newline='') as f:
         reader = csv.DictReader(f)
@@ -119,9 +143,17 @@ def _extract_3dpotatotwin(cfg):
         p_total = np.vstack((p_vol, p_bbox, p_surf))
         sdf, _, _ = pcu.signed_distance_to_mesh(p_total, verts, faces)
 
+        # Normalize and store the partial point cloud in the same coordinate space as the SDF samples
+        # The partial_pc is normalized by the same center and scale used for the mesh
+        partial_pc_normalized = (partial_pc - center) / scale
+
+        # Sample/pad to fixed number of points for batching
+        partial_pc_fixed = _sample_pointcloud(partial_pc_normalized, num_points).astype(np.float32)
+
         samples_dict[obj_idx] = {
             'sdf': sdf,
             'samples_latent_class': combine_sample_latent(p_total, np.array([obj_idx], dtype=np.int32)),
+            'pointcloud': partial_pc_fixed,  # shape (num_points, 3), normalized
         }
         idx_str2int_dict[sample_id] = obj_idx
         idx_int2str_dict[obj_idx] = sample_id

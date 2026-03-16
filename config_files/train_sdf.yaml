@@ -1,32 +1,33 @@
-# Config file for training SDF model
+# Config file for training SDF encoder-decoder model
 
-dataset: 'Potato'   # Dataset used (run data/extract_sdf.py first to create results/samples_dict_Potato.npy)
-seed: 42   # Seed for reproducibility
+dataset: 'Potato'   # Dataset (run data/extract_sdf.py first to create results/samples_dict_Potato.npy)
+seed: 42            # Seed for reproducibility
 
-# training
+# Training
 epochs: 300
-lr_model: 0.00001   # Initial learning rate (model)
-lr_latent: 0.001    # Initial learning rate (latent vector)
-samples_per_shape: 8192   # SDF points to subsample per shape per step (corepp-style)
+lr_model: 0.00005   # Learning rate for encoder + decoder (single optimiser)
+samples_per_shape: 8192   # SDF points to subsample per shape per step (per-sample training)
 batch_split: 1   # Chunk one shape's points into this many forward passes, then one optimizer step (use >1 if OOM)
-sigma_regulariser: 0.01   # Sigma value as regulariser in the loss function
-loss_multiplier: 1   # Loss multiplier
-clamp: true  # Clip the network prediction
-clamp_value: 0.1  # Value for clipping
+sigma_regulariser: 0.01   # Sigma for L2 latent regularisation in the loss function
+loss_multiplier: 1        # Global loss multiplier
+clamp: true               # Clip network predictions
+clamp_value: 0.1          # Clip range [-clamp_value, clamp_value]
 
-# architecture
-num_layers: 8   # Num network layers
-inner_dim: 256   # Inner dimensions of the network
-latent_size: 64   # Size of the latent vector
-skip_connections: True
+# Encoder settings
+encoder_dropout: 0.3      # Dropout probability in PointNet2 FC layers
 
-# lr_scheduling
-lr_scheduler: True   # Learning rate scheduling
-lr_multiplier: 0.9   # Multiplier for the learning rate scheduling
-patience: 20   # Patience inthe learning rate scheduling
+# Architecture (decoder)
+num_layers: 8             # Number of DeepSDF decoder layers
+inner_dim: 256            # Hidden dimension of the decoder
+latent_size: 64           # Latent vector size (encoder output / decoder input prefix)
+skip_connections: True    # Use skip connections in the decoder
 
-# pretrained
-pretrained: False   # Use pretrain weights
-pretrain_weights: ''   # Path to pretrain weights
-pretrain_optim_model: ''   # Path to pretrain weights (model)
-pretrain_optim_latent: ''   # Path to pretrain weights (latent codes)
+# LR scheduling
+lr_scheduler: True        # Enable learning rate scheduling
+lr_multiplier: 0.9        # Multiplicative factor when plateau is detected
+patience: 20              # Epochs to wait before reducing LR
+
+# Pretrained (to resume training from a checkpoint saved by this trainer)
+pretrained: False
+pretrain_weights: ''      # Path to weights.pt (contains encoder + decoder state dicts)
+pretrain_optimizer: ''    # Path to optimizer_state.pt

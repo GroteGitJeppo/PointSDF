@@ -1,10 +1,10 @@
 import csv
 import torch
 import model.model_sdf as sdf_model
+import model.encoder_pointnet2 as encoder_module
 import torch.optim as optim
 import data.dataset_sdf as dataset
 from torch.utils.data import DataLoader
-import results.runs_sdf as runs
 from utils.utils_deepsdf import SDFLoss_multishape
 import os
 import random
@@ -13,14 +13,14 @@ from datetime import datetime
 import numpy as np
 import time
 from tqdm import tqdm
-from utils import utils_deepsdf
 import results
 from torch.utils.tensorboard import SummaryWriter
 import yaml
 import config_files
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-print(f'Device: {device}')
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(f"Device: {device}")
+
 
 class Trainer():
     def __init__(self, train_cfg, resultsfolder, splits_csv):
@@ -29,68 +29,65 @@ class Trainer():
         self.splits_csv = splits_csv
 
     def __call__(self):
-        self.timestamp_run = datetime.now().strftime('%d_%m_%H%M%S')
-        self.runs_dir = os.path.join(self.resultsfolder, 'runs_sdf')
+        self.timestamp_run = datetime.now().strftime("%d_%m_%H%M%S")
+        self.runs_dir = os.path.join(self.resultsfolder, "runs_sdf")
         self.run_dir = os.path.join(self.runs_dir, self.timestamp_run)
         if not os.path.exists(self.run_dir):
             os.makedirs(self.run_dir)
-        
+
         # Logging
         self.writer = SummaryWriter(log_dir=self.run_dir)
-        self.log_path = os.path.join(self.run_dir, 'settings.yaml')
-        with open(self.log_path, 'w') as f:
+        self.log_path = os.path.join(self.run_dir, "settings.yaml")
+        with open(self.log_path, "w") as f:
             yaml.dump(self.train_cfg, f)
 
-        # calculate num objects in samples_dictionary, wich is the number of keys
-        samples_dict_path = os.path.join(self.resultsfolder, f'samples_dict_{self.train_cfg["dataset"]}.npy')
-        samples_dict = np.load(samples_dict_path, allow_pickle=True).item()
+        # Instantiate encoder (PointNet2) and decoder (DeepSDF)
+        self.encoder = encoder_module.PointNet2Encoder(
+            latent_size=self.train_cfg["latent_size"],
+            dropout=self.train_cfg.get("encoder_dropout", 0.3),
+        ).float().to(device)
 
-        # instantiate model and optimisers
         self.model = sdf_model.SDFModel(
-                self.train_cfg['num_layers'], 
-                self.train_cfg['skip_connections'], 
-                inner_dim=self.train_cfg['inner_dim'],
-                latent_size=self.train_cfg['latent_size']
-            ).float().to(device)
+            self.train_cfg["num_layers"],
+            self.train_cfg["skip_connections"],
+            inner_dim=self.train_cfg["inner_dim"],
+            latent_size=self.train_cfg["latent_size"],
+        ).float().to(device)
 
-        # define optimisers
-        self.optimizer_model = optim.Adam(self.model.parameters(), lr=self.train_cfg['lr_model'], weight_decay=0)
-        
-        # generate a unique random latent code for each shape
-        self.latent_codes = utils_deepsdf.generate_latent_codes(self.train_cfg['latent_size'], samples_dict)
-        self.optimizer_latent = optim.Adam([self.latent_codes], lr=self.train_cfg['lr_latent'], weight_decay=0)
-        
-        # Load pretrained weights and optimisers to continue training
-        if self.train_cfg['pretrained']:
-            # load pretrained weights
-            self.model.load_state_dict(torch.load(self.train_cfg['pretrain_weights'], map_location=device))
+        # Single optimiser for both encoder and decoder
+        all_params = list(self.encoder.parameters()) + list(self.model.parameters())
+        self.optimizer = optim.Adam(
+            all_params,
+            lr=self.train_cfg["lr_model"],
+            weight_decay=0,
+        )
 
-            # load pretrained optimisers
-            self.optimizer_model.load_state_dict(torch.load(self.train_cfg['pretrain_optim_model'], map_location=device))
+        # Load pretrained weights to continue training
+        if self.train_cfg["pretrained"]:
+            checkpoint = torch.load(self.train_cfg["pretrain_weights"], map_location=device)
+            self.encoder.load_state_dict(checkpoint["encoder"])
+            self.model.load_state_dict(checkpoint["decoder"])
+            self.optimizer.load_state_dict(
+                torch.load(self.train_cfg["pretrain_optimizer"], map_location=device)
+            )
 
-            # retrieve latent codes from results.npy file
-            results_path = self.train_cfg['pretrain_optim_model'].split(os.sep)
-            results_path[-1] = 'results.npy'
-            results_path = os.sep.join(results_path)
-            # load latent codes from results.npy file
-            results_latent_codes = np.load(results_path, allow_pickle=True).item()
-            self.latent_codes = torch.tensor(results_latent_codes['best_latent_codes']).float().to(device)
-            self.optimizer_latent = optim.Adam([self.latent_codes], lr=self.train_cfg['lr_latent'], weight_decay=0)
-            self.optimizer_latent.load_state_dict(torch.load(self.train_cfg['pretrain_optim_latent'], map_location=device))
+        if self.train_cfg["lr_scheduler"]:
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode="min",
+                factor=self.train_cfg["lr_multiplier"],
+                patience=self.train_cfg["patience"],
+                threshold=0.0001,
+                threshold_mode="rel",
+            )
 
-        if self.train_cfg['lr_scheduler']:
-            self.scheduler_model =  torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_model, mode='min', factor=self.train_cfg['lr_multiplier'], patience=self.train_cfg['patience'], threshold=0.0001, threshold_mode='rel')
-            self.scheduler_latent =  torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_latent, mode='min', factor=self.train_cfg['lr_multiplier'], patience=self.train_cfg['patience'], threshold=0.0001, threshold_mode='rel')
-            
-        # get data
+        # Get data loaders
         train_loader, val_loader = self.get_loaders()
-        self.results = {
-            'best_latent_codes' : []
-        }
 
-        best_loss = 10000000000
+        best_loss = 1e10
         start = time.time()
-        for epoch in tqdm(range(self.train_cfg['epochs']), desc="Epochs", unit="epoch"):
+
+        for epoch in tqdm(range(self.train_cfg["epochs"]), desc="Epochs", unit="epoch"):
             self.epoch = epoch
 
             avg_train_loss = self.train(train_loader)
@@ -99,27 +96,27 @@ class Trainer():
                 avg_val_loss = self.validate(val_loader)
 
                 if avg_val_loss < best_loss:
-                    best_loss = np.copy(avg_val_loss)
-                    best_weights = self.model.state_dict()
-                    best_latent_codes = self.latent_codes.detach().cpu().numpy()
-                    optimizer_model_state = self.optimizer_model.state_dict()
-                    optimizer_latent_state = self.optimizer_latent.state_dict()
+                    best_loss = float(avg_val_loss)
+                    torch.save(
+                        {
+                            "encoder": self.encoder.state_dict(),
+                            "decoder": self.model.state_dict(),
+                        },
+                        os.path.join(self.run_dir, "weights.pt"),
+                    )
+                    torch.save(
+                        self.optimizer.state_dict(),
+                        os.path.join(self.run_dir, "optimizer_state.pt"),
+                    )
 
-                    np.save(os.path.join(self.run_dir, 'results.npy'), self.results)
-                    torch.save(best_weights, os.path.join(self.run_dir, 'weights.pt'))
-                    torch.save(optimizer_model_state, os.path.join(self.run_dir, 'optimizer_model_state.pt'))
-                    torch.save(optimizer_latent_state, os.path.join(self.run_dir, 'optimizer_latent_state.pt'))
-                    self.results['best_latent_codes'] = best_latent_codes
+                if self.train_cfg["lr_scheduler"]:
+                    self.scheduler.step(avg_val_loss)
+                    self.writer.add_scalar(
+                        "Learning rate", self.scheduler._last_lr[0], epoch
+                    )
 
-                if self.train_cfg['lr_scheduler']:
-                    self.scheduler_model.step(avg_val_loss)
-                    self.scheduler_latent.step(avg_val_loss)
-
-                    self.writer.add_scalar('Learning rate (model)', self.scheduler_model._last_lr[0], epoch)
-                    self.writer.add_scalar('Learning rate (latent)', self.scheduler_latent._last_lr[0], epoch)            
-            
         end = time.time()
-        print(f'Time elapsed: {end - start} s')
+        print(f"Time elapsed: {end - start:.1f} s")
 
     def _get_split_indices(self):
         idx_str2int = np.load(os.path.join(self.resultsfolder, 'idx_str2int_dict.npy'), allow_pickle=True).item()
@@ -131,67 +128,95 @@ class Trainer():
 
     def get_loaders(self):
         train_indices, val_indices = self._get_split_indices()
-        full_data = dataset.SDFDatasetPerShape(self.train_cfg['dataset'], results_folder=self.resultsfolder)
-        train_data = dataset.SDFDatasetPerShape(self.train_cfg['dataset'], results_folder=self.resultsfolder, indices=train_indices)
-        val_data = dataset.SDFDatasetPerShape(self.train_cfg['dataset'], results_folder=self.resultsfolder, indices=val_indices)
+        train_data = dataset.SDFDatasetPerShape(
+            self.train_cfg["dataset"], results_folder=self.resultsfolder, indices=train_indices
+        )
+        val_data = dataset.SDFDatasetPerShape(
+            self.train_cfg["dataset"], results_folder=self.resultsfolder, indices=val_indices
+        )
         train_loader = DataLoader(train_data, batch_size=1, shuffle=True)
         val_loader = DataLoader(val_data, batch_size=1, shuffle=False)
         return train_loader, val_loader
 
-    def generate_xy_per_shape(self, samples_latent_class, sdf, obj_idx):
-        """Build network input and target for one shape's points. samples_latent_class: (N, 4), sdf: (N, 1)."""
-        n = samples_latent_class.shape[0]
-        latent = self.latent_codes[obj_idx].unsqueeze(0).expand(n, -1).to(device)
-        coords = samples_latent_class[:, 1:].to(device)
+    def generate_xy_per_shape(self, pointcloud, coords, sdf):
+        """
+        Encode one shape's point cloud and build decoder input/target for (coords, sdf).
+        pointcloud: (P, 3), coords: (N, 3), sdf: (N, 1).
+        Returns x (N, latent_size+3), y (N, 1), latent (N, latent_size).
+        """
+        pointcloud = pointcloud.to(device)
+        if pointcloud.dim() == 2:
+            pointcloud = pointcloud.unsqueeze(0)
+        latent = self.encoder(pointcloud)
+        n = coords.shape[0]
+        coords = coords.to(device)
+        sdf = sdf.to(device)
+        if sdf.dim() == 1:
+            sdf = sdf.unsqueeze(1)
+        latent = latent.expand(n, -1)
         x = torch.hstack((latent, coords))
-        y = sdf.to(device)
-        if y.dim() == 1:
-            y = y.unsqueeze(1)
+        y = sdf
         return x, y, latent
 
     def train(self, train_loader):
         total_loss = 0.0
         num_shapes = 0
         self.model.train()
-        samples_per_shape = self.train_cfg['samples_per_shape']
-        batch_split = self.train_cfg.get('batch_split', 1)
-        for batch in tqdm(train_loader, desc=f"Train Epoch {self.epoch}", leave=False, unit="shape"):
-            samples_latent_class = batch[0].squeeze(0).to(device)
-            sdf = batch[1].squeeze(0).to(device)
-            obj_idx = batch[2].squeeze(0).item() if batch[2].dim() > 0 else int(batch[2].item())
-            n_pts = samples_latent_class.shape[0]
+        self.encoder.train()
+        samples_per_shape = self.train_cfg["samples_per_shape"]
+        batch_split = self.train_cfg.get("batch_split", 1)
+
+        for batch in tqdm(
+            train_loader, desc=f"Train Epoch {self.epoch}", leave=False, unit="shape"
+        ):
+            pointcloud = batch[0].squeeze(0)
+            coords = batch[1].squeeze(0)
+            sdf = batch[2].squeeze(0)
+            n_pts = coords.shape[0]
             if n_pts == 0:
                 continue
             num_sub = min(samples_per_shape, n_pts)
-            idx = torch.randperm(n_pts, device=samples_latent_class.device)[:num_sub]
-            samples_latent_class = samples_latent_class[idx]
+            idx = torch.randperm(n_pts, device=coords.device)[:num_sub]
+            coords = coords[idx]
             sdf = sdf[idx]
-            if self.train_cfg['clamp']:
-                sdf = torch.clamp(sdf, -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
+            if self.train_cfg["clamp"]:
+                sdf = torch.clamp(
+                    sdf,
+                    -self.train_cfg["clamp_value"],
+                    self.train_cfg["clamp_value"],
+                )
             if sdf.dim() == 1:
                 sdf = sdf.unsqueeze(1)
-            num_sdf_samples = samples_latent_class.shape[0]
 
-            self.optimizer_model.zero_grad()
-            self.optimizer_latent.zero_grad()
-
-            chunks_x = torch.chunk(samples_latent_class, batch_split)
+            self.optimizer.zero_grad()
+            shape_loss = 0.0
+            chunks_coords = torch.chunk(coords, batch_split)
             chunks_sdf = torch.chunk(sdf, batch_split)
-            for sc, sy in zip(chunks_x, chunks_sdf):
-                x, y, latent_batch = self.generate_xy_per_shape(sc, sy, obj_idx)
+            for c_coords, c_sdf in zip(chunks_coords, chunks_sdf):
+                x, y, latent = self.generate_xy_per_shape(pointcloud, c_coords, c_sdf)
                 predictions = self.model(x)
-                if self.train_cfg['clamp']:
-                    predictions = torch.clamp(predictions, -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
-                loss_value, _, _ = self.train_cfg['loss_multiplier'] * SDFLoss_multishape(y, predictions, x[:, :self.train_cfg['latent_size']], sigma=self.train_cfg['sigma_regulariser'])
-                (loss_value / batch_split).backward()
-            self.optimizer_latent.step()
-            self.optimizer_model.step()
-            total_loss += loss_value.detach().cpu().numpy()
+                if self.train_cfg["clamp"]:
+                    predictions = torch.clamp(
+                        predictions,
+                        -self.train_cfg["clamp_value"],
+                        self.train_cfg["clamp_value"],
+                    )
+                loss_value, _, _ = SDFLoss_multishape(
+                    y,
+                    predictions,
+                    latent,
+                    sigma=self.train_cfg["sigma_regulariser"],
+                )
+                loss_value = self.train_cfg["loss_multiplier"] * loss_value / batch_split
+                loss_value.backward()
+                shape_loss += loss_value.detach().cpu().numpy() * batch_split
+            self.optimizer.step()
+            total_loss += shape_loss
             num_shapes += 1
 
         avg_train_loss = total_loss / num_shapes if num_shapes else 0.0
-        print(f'Training: loss {avg_train_loss}')
-        self.writer.add_scalar('Training loss', avg_train_loss, self.epoch)
+        print(f"Training: loss {avg_train_loss:.6f}")
+        self.writer.add_scalar("Training loss", avg_train_loss, self.epoch)
         return avg_train_loss
 
     def validate(self, val_loader):
@@ -200,43 +225,59 @@ class Trainer():
         total_loss_latent = 0.0
         num_shapes = 0
         self.model.eval()
-        samples_per_shape = self.train_cfg['samples_per_shape']
+        self.encoder.eval()
+        samples_per_shape = self.train_cfg["samples_per_shape"]
 
         for batch in tqdm(val_loader, desc="Validation", leave=False, unit="shape"):
-            samples_latent_class = batch[0].squeeze(0).to(device)
-            sdf = batch[1].squeeze(0).to(device)
-            obj_idx = batch[2].squeeze(0).item() if batch[2].dim() > 0 else int(batch[2].item())
-            n_pts = samples_latent_class.shape[0]
+            pointcloud = batch[0].squeeze(0)
+            coords = batch[1].squeeze(0)
+            sdf = batch[2].squeeze(0)
+            n_pts = coords.shape[0]
             if n_pts == 0:
                 continue
             num_sub = min(samples_per_shape, n_pts)
-            idx = torch.randperm(n_pts, device=samples_latent_class.device)[:num_sub]
-            samples_latent_class = samples_latent_class[idx]
+            idx = torch.randperm(n_pts, device=coords.device)[:num_sub]
+            coords = coords[idx]
             sdf = sdf[idx]
-            if self.train_cfg['clamp']:
-                sdf = torch.clamp(sdf, -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
+            if self.train_cfg["clamp"]:
+                sdf = torch.clamp(
+                    sdf,
+                    -self.train_cfg["clamp_value"],
+                    self.train_cfg["clamp_value"],
+                )
             if sdf.dim() == 1:
                 sdf = sdf.unsqueeze(1)
-            x, y, latent_batch = self.generate_xy_per_shape(samples_latent_class, sdf, obj_idx)
+            x, y, latent = self.generate_xy_per_shape(pointcloud, coords, sdf)
             predictions = self.model(x)
-            if self.train_cfg['clamp']:
-                predictions = torch.clamp(predictions, -self.train_cfg['clamp_value'], self.train_cfg['clamp_value'])
-            loss_value, loss_rec, loss_latent = self.train_cfg['loss_multiplier'] * SDFLoss_multishape(y, predictions, latent_batch, sigma=self.train_cfg['sigma_regulariser'])
+            if self.train_cfg["clamp"]:
+                predictions = torch.clamp(
+                    predictions,
+                    -self.train_cfg["clamp_value"],
+                    self.train_cfg["clamp_value"],
+                )
+            loss_value, loss_rec, loss_latent_reg = SDFLoss_multishape(
+                y,
+                predictions,
+                latent,
+                sigma=self.train_cfg["sigma_regulariser"],
+            )
+            loss_value = self.train_cfg["loss_multiplier"] * loss_value
             total_loss += loss_value.data.cpu().numpy()
             total_loss_rec += loss_rec.data.cpu().numpy()
-            total_loss_latent += loss_latent.data.cpu().numpy()
+            total_loss_latent += loss_latent_reg.data.cpu().numpy()
             num_shapes += 1
 
         avg_val_loss = total_loss / num_shapes if num_shapes else 0.0
         avg_loss_rec = total_loss_rec / num_shapes if num_shapes else 0.0
         avg_loss_latent = total_loss_latent / num_shapes if num_shapes else 0.0
-        print(f'Validation: loss {avg_val_loss}')
-        self.writer.add_scalar('Validation loss', avg_val_loss, self.epoch)
-        self.writer.add_scalar('Reconstruction loss', avg_loss_rec, self.epoch)
-        self.writer.add_scalar('Latent code loss', avg_loss_latent, self.epoch)
+        print(f"Validation: loss {avg_val_loss:.6f}")
+        self.writer.add_scalar("Validation loss", avg_val_loss, self.epoch)
+        self.writer.add_scalar("Reconstruction loss", avg_loss_rec, self.epoch)
+        self.writer.add_scalar("Latent code loss", avg_loss_latent, self.epoch)
         return avg_val_loss
 
-if __name__=='__main__':
+
+if __name__ == "__main__":
     torch.manual_seed(133)
     random.seed(133)
     np.random.seed(133)
@@ -245,13 +286,11 @@ if __name__=='__main__':
     project_root = current_file.parent.parent
     data_folder = os.path.join(project_root, "data")
     splits_csv = os.path.join(data_folder, "splits.csv")
-    weightsfolder = os.path.join(project_root, "weights")
     resultsfolder = os.path.join(project_root, "results")
-    os.makedirs(weightsfolder, exist_ok=True)
     os.makedirs(resultsfolder, exist_ok=True)
 
     config_path = os.path.join(project_root, "config_files", "train_sdf.yaml")
-    with open(config_path, 'rb') as f:
+    with open(config_path, "rb") as f:
         train_cfg = yaml.load(f, Loader=yaml.FullLoader)
 
     trainer = Trainer(train_cfg, resultsfolder, splits_csv)
