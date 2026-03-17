@@ -129,9 +129,11 @@ class Trainer():
             checkpoint = torch.load(self.train_cfg["pretrain_weights"], map_location=device)
             self.encoder.load_state_dict(checkpoint["encoder"])
             self.model.load_state_dict(checkpoint["decoder"])
-            self.optimizer.load_state_dict(
-                torch.load(self.train_cfg["pretrain_optimizer"], map_location=device)
-            )
+            opt_path = self.train_cfg.get("pretrain_optimizer", "")
+            if opt_path:
+                self.optimizer.load_state_dict(
+                    torch.load(opt_path, map_location=device)
+                )
 
         if self.train_cfg["lr_scheduler"]:
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
