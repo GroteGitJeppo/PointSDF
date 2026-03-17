@@ -46,13 +46,6 @@ warnings.filterwarnings("ignore")
 # Optional heavy dependencies (soft imports)                                  #
 # --------------------------------------------------------------------------- #
 try:
-    from pytorch3d.loss import chamfer_distance as _pt3d_chamfer
-    _HAS_PT3D = True
-except ImportError:
-    _HAS_PT3D = False
-    print("[warn] pytorch3d not found – Chamfer Distance will be NaN")
-
-try:
     from kaolin.metrics.pointcloud import f_score as _kaolin_fscore
     _HAS_KAOLIN = True
 except ImportError:
@@ -135,13 +128,18 @@ def _load_gt_mesh(root_dir: str, label: str) -> trimesh.Trimesh | None:
 
 
 def _chamfer_mm(pred_pts: np.ndarray, gt_pts: np.ndarray) -> float:
-    """Chamfer Distance in mm (identical formula to pointcraft)."""
-    if not _HAS_PT3D:
-        return float("nan")
-    p = torch.tensor(pred_pts, dtype=torch.float32, device=device).unsqueeze(0)
-    g = torch.tensor(gt_pts, dtype=torch.float32, device=device).unsqueeze(0)
-    loss, _ = _pt3d_chamfer(p, g)
-    return torch.sqrt(loss * 1e6).item()
+    """
+    Symmetric Chamfer Distance in mm, computed with scipy cKDTree.
+
+    Formula matches pytorch3d's chamfer_distance:
+        CD = sqrt( (mean(d²_{p→g}) + mean(d²_{g→p})) / 2 ) × 1000
+    where distances are in metres and the result is in millimetres.
+    """
+    from scipy.spatial import cKDTree
+    d_pred = cKDTree(gt_pts).query(pred_pts)[0]   # dist from each pred pt to nearest GT
+    d_gt   = cKDTree(pred_pts).query(gt_pts)[0]   # dist from each GT pt to nearest pred
+    cd_m2  = (np.mean(d_pred ** 2) + np.mean(d_gt ** 2)) / 2   # metres²
+    return float(np.sqrt(cd_m2) * 1000)                         # → mm
 
 
 def _fscore(pred_pts: np.ndarray, gt_pts: np.ndarray):

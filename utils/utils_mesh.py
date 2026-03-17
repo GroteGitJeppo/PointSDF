@@ -1,10 +1,6 @@
 import numpy as np
 import trimesh
 import torch
-from pytorch3d.ops.mesh_face_areas_normals import mesh_face_areas_normals
-from pytorch3d.ops.sample_points_from_meshes import _rand_barycentric_coords
-from pytorch3d.loss import chamfer_distance as cuda_cd
-from pytorch3d.io.obj_io import load_obj
 import pybullet as pb
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -86,6 +82,7 @@ def translate_rotate_mesh(pos_wrld_list, rot_M_wrld_list, pointclouds_list, obj_
 # adapted from: https://github.com/facebookresearch/Active-3D-Vision-and-Touch/blob/main/pterotactyl/utility/utils.py
 # returns the chamfer distance between a mesh and a point cloud (Ed. Smith)
 def chamfer_distance(verts, faces, gt_points, num=1000, repeat=1):
+    from pytorch3d.loss import chamfer_distance as cuda_cd
     pred_points= batch_sample(verts, faces, num=num)
     cd, _ = cuda_cd(pred_points, gt_points, batch_reduction=None)
     if repeat > 1:
@@ -100,9 +97,11 @@ def chamfer_distance(verts, faces, gt_points, num=1000, repeat=1):
 
 
 # implemented from: https://github.com/facebookresearch/Active-3D-Vision-and-Touch/blob/main/pterotactyl/utility/utils.py, MIT License
- # sample points from a batch of meshes
+# sample points from a batch of meshes
 def batch_sample(verts, faces, num=10000):
     # Pytorch3D based code
+    from pytorch3d.ops.mesh_face_areas_normals import mesh_face_areas_normals
+    from pytorch3d.ops.sample_points_from_meshes import _rand_barycentric_coords
     bs = verts.shape[0]
     face_dim = faces.shape[0]
     vert_dim = verts.shape[1]
@@ -141,6 +140,7 @@ def batch_sample(verts, faces, num=10000):
 # implemented from: https://github.com/facebookresearch/Active-3D-Vision-and-Touch/blob/main/pterotactyl/utility/utils.py, MIT License
 # loads the initial mesh and returns vertex, and face information
 def load_mesh_touch(obj):
+    from pytorch3d.io.obj_io import load_obj
     obj_info = load_obj(obj)
     verts = obj_info[0]
     faces = obj_info[1].verts_idx
