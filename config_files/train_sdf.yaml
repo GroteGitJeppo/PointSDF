@@ -62,12 +62,12 @@ warm_start_decoder_path: 'results/runs_autodecoder/17_03_111732/decoder_autodeco
 # learn to map into the Stage 1 latent space before joint fine-tuning begins.
 # Set to 0 to skip the frozen phase and train encoder + decoder jointly from
 # the very first epoch.
-freeze_decoder_epochs: 100
+freeze_decoder_epochs: 0
 lr_model_unfrozen: 0.00005    # Decoder LR once unfrozen (can match or differ from lr_model)
 
 # Supervised latent regression (corepp-style Stage 2)
 # When true, the encoder is trained with MSE loss against the Stage 1 latent codes —
 # no decoder calls during training. The decoder is frozen for the entire run.
 # Requires warm_start_decoder: true and a completed Stage 1 run.
-supervised_latent: false
-supervised_latent_codes_path: ''   # Path to latent_codes_autodecoder.pt from Stage 1
+supervised_latent: true
+supervised_latent_codes_path: 'results/runs_autodecoder/17_03_111732/latent_codes_autodecoder.pt'   # Path to latent_codes_autodecoder.pt from Stage 1
