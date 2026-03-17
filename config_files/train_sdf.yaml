@@ -4,7 +4,7 @@ dataset: 'Potato'   # Dataset (run data/extract_sdf.py first to create results/s
 seed: 42            # Seed for reproducibility
 
 # Training
-epochs: 300
+epochs: 100
 lr_model: 0.00005   # Learning rate for encoder + decoder (single optimiser)
 samples_per_shape: 8192   # SDF points to subsample per shape per step (per-sample training)
 batch_split: 1   # Chunk one shape's points into this many forward passes, then one optimizer step (use >1 if OOM)
@@ -39,7 +39,7 @@ mixed_precision: true         # Enable torch.cuda.amp for ~2-3x GPU speed-up (CU
 grad_accumulation_steps: 8    # Accumulate gradients over N shapes before each optimizer step
 
 # Chamfer Distance validation
-chamfer_val_freq: 5       # Compute Chamfer Distance every N epochs (0 to disable)
+chamfer_val_freq: 0       # Compute Chamfer Distance every N epochs (0 to disable)
 chamfer_resolution: 40    # Grid resolution for mesh extraction during CD validation
 
 # LR scheduling

@@ -378,16 +378,42 @@ class Trainer():
 
     def validate(self, val_loader):
         total_loss = 0.0
-        total_loss_rec = 0.0
-        total_loss_latent = 0.0
         num_shapes = 0
         self.model.eval()
         self.encoder.eval()
+
+        # ------------------------------------------------------------------
+        # Supervised latent regression: validate with MSE vs stored codes.
+        # Skips all SDF / decoder calls — matches what train() does.
+        # ------------------------------------------------------------------
+        if self._supervised:
+            for batch in tqdm(val_loader, desc="Validation", leave=False, unit="shape"):
+                pointcloud = batch[0].squeeze(0)
+                obj_idx    = batch[3].item()
+                pc = pointcloud.to(device)
+                if pc.dim() == 2:
+                    pc = pc.unsqueeze(0)
+                with self.autocast_ctx():
+                    z_pred   = self.encoder(pc).squeeze(0)
+                    z_target = self.stored_codes[obj_idx]
+                    loss_value = F.mse_loss(z_pred, z_target)
+                total_loss += loss_value.item()
+                num_shapes += 1
+            avg_val_loss = total_loss / num_shapes if num_shapes else 0.0
+            print(f"Validation: MSE loss {avg_val_loss:.6f}")
+            self.writer.add_scalar("Validation loss", avg_val_loss, self.epoch)
+            return avg_val_loss
+
+        # ------------------------------------------------------------------
+        # Standard SDF validation
+        # ------------------------------------------------------------------
+        total_loss_rec = 0.0
+        total_loss_latent = 0.0
         samples_per_shape = self.train_cfg["samples_per_shape"]
 
         # Chamfer Distance is computed every chamfer_val_freq epochs
         chamfer_freq = self.train_cfg.get("chamfer_val_freq", 5)
-        compute_chamfer = (self.epoch % chamfer_freq == 0)
+        compute_chamfer = chamfer_freq > 0 and (self.epoch % chamfer_freq == 0)
         chamfer_resolution = self.train_cfg.get("chamfer_resolution", 40)
         total_chamfer = 0.0
         num_chamfer = 0
