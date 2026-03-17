@@ -6,7 +6,7 @@ folder_sdf: '16_03_162024'        # Run folder under results/runs_sdf (set to yo
 root_dir: 'data'  # relative to PointSDF project root (contains 1_rgbd, 2_sfm, 3_pair)
 
 # Mesh extraction
-resolution: 128        # Marching cubes grid resolution (higher = more accurate volume, slower)
+resolution: 20         # Grid resolution — matches corepp's grid_density: 20 (8k points, single decoder batch)
 
 # Metric computation
 num_points_sample: 10000   # Points sampled from predicted and GT meshes for CD / F-score

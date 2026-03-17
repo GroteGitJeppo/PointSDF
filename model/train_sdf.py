@@ -1,6 +1,7 @@
 import csv
 import contextlib
 import torch
+import torch.nn.functional as F
 import model.model_sdf as sdf_model
 import model.encoder_pointnet2 as encoder_module
 import torch.optim as optim
@@ -74,10 +75,22 @@ class Trainer():
             self.model.load_state_dict(ckpt["decoder"])
             print(f"[warm-start] Loaded Stage 1 decoder from {ws_path}")
 
-        # Freeze decoder for first N epochs so the encoder first learns to map
-        # into the Stage 1 latent space before joint fine-tuning begins.
-        self._freeze_epochs = self.train_cfg.get("freeze_decoder_epochs", 0)
-        if self._freeze_epochs > 0:
+        # Supervised latent regression (corepp-style): train encoder with MSE vs
+        # Stage 1 latent codes — no decoder calls during training at all.
+        # The decoder is frozen for the entire run; only the encoder is updated.
+        self._supervised = self.train_cfg.get("supervised_latent", False)
+        if self._supervised:
+            codes_ckpt = torch.load(
+                self.train_cfg["supervised_latent_codes_path"], map_location=device
+            )
+            weight      = codes_ckpt["latent_codes"]["weight"]   # (N_train, latent_size)
+            raw_to_embed = codes_ckpt["raw_to_embed"]            # {raw_idx: embed_idx}
+            max_raw      = max(raw_to_embed.keys()) + 1
+            table = torch.zeros(max_raw, self.train_cfg["latent_size"], device=device)
+            for raw, emb in raw_to_embed.items():
+                table[raw] = weight[emb].to(device)
+            self.stored_codes = table.detach()                   # no grad, read-only
+            # Freeze decoder — encoder is the only thing trained
             for p in self.model.parameters():
                 p.requires_grad_(False)
             self.optimizer = optim.Adam(
@@ -85,15 +98,31 @@ class Trainer():
                 lr=self.train_cfg["lr_model"],
                 weight_decay=0,
             )
-            print(f"[freeze] Decoder frozen for first {self._freeze_epochs} epochs")
-        else:
-            # Single optimiser for both encoder and decoder (default behaviour)
-            all_params = list(self.encoder.parameters()) + list(self.model.parameters())
-            self.optimizer = optim.Adam(
-                all_params,
-                lr=self.train_cfg["lr_model"],
-                weight_decay=0,
-            )
+            print(f"[supervised] Loaded {len(raw_to_embed)} Stage 1 latent codes; "
+                  "decoder frozen for entire run")
+
+        # Freeze decoder for first N epochs so the encoder first learns to map
+        # into the Stage 1 latent space before joint fine-tuning begins.
+        # (Ignored when supervised_latent is active — decoder stays frozen permanently.)
+        self._freeze_epochs = 0 if self._supervised else self.train_cfg.get("freeze_decoder_epochs", 0)
+        if not self._supervised:
+            if self._freeze_epochs > 0:
+                for p in self.model.parameters():
+                    p.requires_grad_(False)
+                self.optimizer = optim.Adam(
+                    self.encoder.parameters(),
+                    lr=self.train_cfg["lr_model"],
+                    weight_decay=0,
+                )
+                print(f"[freeze] Decoder frozen for first {self._freeze_epochs} epochs")
+            else:
+                # Single optimiser for both encoder and decoder (default behaviour)
+                all_params = list(self.encoder.parameters()) + list(self.model.parameters())
+                self.optimizer = optim.Adam(
+                    all_params,
+                    lr=self.train_cfg["lr_model"],
+                    weight_decay=0,
+                )
 
         # Load pretrained weights to continue training
         if self.train_cfg["pretrained"]:
@@ -123,8 +152,9 @@ class Trainer():
         for epoch in tqdm(range(self.train_cfg["epochs"]), desc="Epochs", unit="epoch"):
             self.epoch = epoch
 
-            # Unfreeze decoder once freeze_decoder_epochs is reached
-            if self._freeze_epochs > 0 and epoch == self._freeze_epochs:
+            # Unfreeze decoder once freeze_decoder_epochs is reached.
+            # Skipped when supervised_latent is active (decoder stays frozen permanently).
+            if not self._supervised and self._freeze_epochs > 0 and epoch == self._freeze_epochs:
                 for p in self.model.parameters():
                     p.requires_grad_(True)
                 self.optimizer = optim.Adam(
@@ -241,8 +271,6 @@ class Trainer():
         num_shapes = 0
         self.model.train()
         self.encoder.train()
-        samples_per_shape = self.train_cfg["samples_per_shape"]
-        batch_split = self.train_cfg.get("batch_split", 1)
         grad_accum_steps = max(1, self.train_cfg.get("grad_accumulation_steps", 1))
 
         self.optimizer.zero_grad()
@@ -250,22 +278,52 @@ class Trainer():
         for shape_idx, batch in enumerate(tqdm(
             train_loader, desc=f"Train Epoch {self.epoch}", leave=False, unit="shape"
         )):
-            pointcloud = batch[0].squeeze(0)
+            pointcloud = batch[0].squeeze(0)   # (P, 3)
+            obj_idx    = batch[3].item()        # raw integer key
+
+            # ------------------------------------------------------------------
+            # Supervised latent regression (corepp-style): MSE vs stored Stage 1
+            # latent codes — no SDF coords / decoder calls at all.
+            # ------------------------------------------------------------------
+            if self._supervised:
+                pc = pointcloud.to(device)
+                if pc.dim() == 2:
+                    pc = pc.unsqueeze(0)        # (1, P, 3)
+                with self.autocast_ctx():
+                    z_pred   = self.encoder(pc).squeeze(0)          # (latent_size,)
+                    z_target = self.stored_codes[obj_idx]           # (latent_size,)
+                    loss_value = (
+                        F.mse_loss(z_pred, z_target)
+                        / grad_accum_steps
+                    )
+                self.scaler.scale(loss_value).backward()
+                total_loss += loss_value.detach().cpu().item() * grad_accum_steps
+                num_shapes += 1
+
+                is_accum_step = (shape_idx + 1) % grad_accum_steps == 0
+                is_last_batch = (shape_idx + 1) == len(train_loader)
+                if is_accum_step or is_last_batch:
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self.optimizer.zero_grad()
+                continue
+
+            # ------------------------------------------------------------------
+            # Standard SDF reconstruction training
+            # ------------------------------------------------------------------
             coords = batch[1].squeeze(0)
-            sdf = batch[2].squeeze(0)
-            n_pts = coords.shape[0]
+            sdf    = batch[2].squeeze(0)
+            n_pts  = coords.shape[0]
             if n_pts == 0:
                 continue
+            samples_per_shape = self.train_cfg["samples_per_shape"]
+            batch_split       = self.train_cfg.get("batch_split", 1)
             num_sub = min(samples_per_shape, n_pts)
             idx = torch.randperm(n_pts, device=coords.device)[:num_sub]
             coords = coords[idx]
-            sdf = sdf[idx]
+            sdf    = sdf[idx]
             if self.train_cfg["clamp"]:
-                sdf = torch.clamp(
-                    sdf,
-                    -self.train_cfg["clamp_value"],
-                    self.train_cfg["clamp_value"],
-                )
+                sdf = torch.clamp(sdf, -self.train_cfg["clamp_value"], self.train_cfg["clamp_value"])
             if sdf.dim() == 1:
                 sdf = sdf.unsqueeze(1)
 
@@ -273,20 +331,16 @@ class Trainer():
             if self.augmentation is not None:
                 pointcloud, coords, sdf = self.augmentation(pointcloud, coords, sdf)
                 if self.train_cfg["clamp"]:
-                    sdf = torch.clamp(
-                        sdf,
-                        -self.train_cfg["clamp_value"],
-                        self.train_cfg["clamp_value"],
-                    )
+                    sdf = torch.clamp(sdf, -self.train_cfg["clamp_value"], self.train_cfg["clamp_value"])
 
             shape_loss = 0.0
             chunks_coords = torch.chunk(coords, batch_split)
-            chunks_sdf = torch.chunk(sdf, batch_split)
+            chunks_sdf    = torch.chunk(sdf, batch_split)
 
             for c_coords, c_sdf in zip(chunks_coords, chunks_sdf):
                 with self.autocast_ctx():
                     x, y, latent = self.generate_xy_per_shape(pointcloud, c_coords, c_sdf)
-                    predictions = self.model(x)
+                    predictions  = self.model(x)
                     if self.train_cfg["clamp"]:
                         predictions = torch.clamp(
                             predictions,
@@ -299,7 +353,6 @@ class Trainer():
                         latent,
                         sigma=self.train_cfg["sigma_regulariser"],
                     )
-                    # Divide by both batch_split and grad_accum_steps for correct scaling
                     loss_value = (
                         self.train_cfg["loss_multiplier"] * loss_value
                         / (batch_split * grad_accum_steps)

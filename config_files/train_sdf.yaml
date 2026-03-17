@@ -64,3 +64,10 @@ warm_start_decoder_path: 'results/runs_autodecoder/17_03_111732/decoder_autodeco
 # the very first epoch.
 freeze_decoder_epochs: 100
 lr_model_unfrozen: 0.00005    # Decoder LR once unfrozen (can match or differ from lr_model)
+
+# Supervised latent regression (corepp-style Stage 2)
+# When true, the encoder is trained with MSE loss against the Stage 1 latent codes —
+# no decoder calls during training. The decoder is frozen for the entire run.
+# Requires warm_start_decoder: true and a completed Stage 1 run.
+supervised_latent: false
+supervised_latent_codes_path: ''   # Path to latent_codes_autodecoder.pt from Stage 1

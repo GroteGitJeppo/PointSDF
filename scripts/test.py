@@ -267,7 +267,13 @@ def main(cfg: dict):
 
     coords, grad_size_axis = utils_deepsdf.get_volume_coords(resolution)
     coords = coords.to(device)
-    coords_batches = torch.split(coords, 100_000)
+    # For small grids (≤ 50k points, e.g. resolution 20 → 8k) pass everything
+    # in one batch to avoid Python-loop overhead.  For large grids keep the
+    # 100k-chunk split so GPU memory is not exhausted.
+    if coords.shape[0] <= 50_000:
+        coords_batches = [coords]
+    else:
+        coords_batches = torch.split(coords, 100_000)
 
     rng = np.random.default_rng(42)
 
@@ -316,10 +322,15 @@ def main(cfg: dict):
         if run_ref:
             latent_code = _run_refinement(decoder, latent_code, pointcloud_xyz, cfg)
 
-        # ---- marching cubes ------------------------------------------ #
+        # ---- mesh extraction (GPU convex hull or CPU marching cubes) ---- #
         try:
             sdf_pred = utils_deepsdf.predict_sdf(latent_code, coords_batches, decoder)
-            vertices_norm, faces = utils_deepsdf.extract_mesh(grad_size_axis, sdf_pred)
+            try:
+                # Fast path: GPU convex-hull (corepp-style, requires open3d CUDA)
+                vertices_norm, faces = utils_deepsdf.extract_mesh_cuda(sdf_pred, coords)
+            except Exception:
+                # Fallback: CPU scikit-image marching cubes
+                vertices_norm, faces = utils_deepsdf.extract_mesh(grad_size_axis, sdf_pred)
         except Exception as e:
             print(f"  [warn] mesh extraction failed for {label}: {e}")
             labels.append(label)

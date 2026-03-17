@@ -2,6 +2,7 @@ import torch
 import meshplot as mp
 import skimage
 import numpy as np
+import torch.utils.dlpack
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -92,3 +93,57 @@ def extract_mesh(grad_size_axis, sdf):
     vertices = vertices * ((x_max-x_min) / grad_size_axis) + x_min
 
     return vertices, faces
+
+
+def extract_mesh_cuda(sdf: torch.Tensor, grid_points: torch.Tensor,
+                      threshold: float = 0.0):
+    """
+    GPU convex-hull mesh extraction — corepp-style, fast for convex objects.
+
+    Filters grid points classified as interior (sdf < threshold), builds a
+    convex hull on the GPU via Open3D's CUDA tensor API, and returns the mesh
+    as plain numpy arrays matching the extract_mesh() API.
+
+    Args:
+        sdf:         (M, 1) SDF predictions, on GPU.
+        grid_points: (M, 3) corresponding 3D coordinates in normalised coords,
+                     on GPU.  Must be the same coords tensor used to query the
+                     decoder so interior/exterior labels are consistent.
+        threshold:   SDF iso-value for the surface (default 0.0).
+
+    Returns:
+        vertices: (V, 3) float32 numpy array in normalised coords [-1, 1].
+        faces:    (F, 3) int32  numpy array.
+
+    Raises:
+        ImportError  if open3d is not installed.
+        RuntimeError if no interior points are found (object missing from grid).
+    """
+    import open3d as o3d
+    import open3d.core as o3c
+
+    keep_pts = grid_points[sdf.squeeze(-1) < threshold]   # (K, 3) GPU tensor
+    if keep_pts.shape[0] < 4:
+        raise RuntimeError(
+            f"extract_mesh_cuda: only {keep_pts.shape[0]} interior points found "
+            "(need >= 4 for convex hull). Check grid resolution and SDF values."
+        )
+
+    o3d_t   = o3c.Tensor.from_dlpack(torch.utils.dlpack.to_dlpack(keep_pts.contiguous()))
+    pcd_gpu = o3d.t.geometry.PointCloud(o3d_t)
+
+    voxel_size = 0.0
+    while True:
+        src = pcd_gpu.voxel_down_sample(voxel_size) if voxel_size > 0 else pcd_gpu
+        hull, _  = src.compute_convex_hull()
+        mesh     = hull.to_legacy()
+        mesh.remove_degenerate_triangles()
+        mesh.remove_duplicated_triangles()
+        mesh.remove_duplicated_vertices()
+        mesh.remove_non_manifold_edges()
+        mesh.remove_unreferenced_vertices()
+        if mesh.is_watertight() or voxel_size > 0.1:
+            break
+        voxel_size += 0.01
+
+    return np.asarray(mesh.vertices, dtype=np.float32), np.asarray(mesh.triangles, dtype=np.int32)
