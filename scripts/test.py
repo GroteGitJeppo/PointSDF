@@ -99,7 +99,14 @@ def _sample_mesh_pts(vertices: np.ndarray, faces: np.ndarray,
 
 
 def _load_gt_mesh(root_dir: str, label: str) -> trimesh.Trimesh | None:
-    """Load the ground-truth SfM mesh for a given label."""
+    """Load the GT SfM mesh and register it into the RGBD frame.
+
+    extract_sdf.py trains the model in the RGBD coordinate frame by applying
+    T_inv to the SfM mesh vertices before normalisation.  The predicted mesh
+    is un-normalised back into that same RGBD frame at test time.  The GT
+    mesh must therefore receive the same T_inv transform so both clouds live
+    in a common coordinate system before any distance metric is computed.
+    """
     pair_file = os.path.join(root_dir, "3_pair", "tmatrix", label + ".json")
     if not os.path.exists(pair_file):
         return None
@@ -107,7 +114,21 @@ def _load_gt_mesh(root_dir: str, label: str) -> trimesh.Trimesh | None:
         with open(pair_file) as f:
             pair_data = json.load(f)
         mesh_path = os.path.join(root_dir, pair_data["sfm_mesh_file"])
-        return utils_mesh._as_mesh(trimesh.load(mesh_path))
+        mesh = utils_mesh._as_mesh(trimesh.load(mesh_path))
+
+        # Apply the inverse registration transform (SfM → RGBD frame),
+        # identical to what extract_sdf.py does before computing the SDF.
+        T = np.asarray(pair_data["T"], dtype=np.float64)
+        T_inv = np.linalg.inv(T)
+        verts = np.asarray(mesh.vertices, dtype=np.float64)
+        ones = np.ones((verts.shape[0], 1), dtype=np.float64)
+        verts_registered = (np.hstack([verts, ones]) @ T_inv.T)[:, :3]
+
+        return trimesh.Trimesh(
+            vertices=verts_registered,
+            faces=np.asarray(mesh.faces),
+            process=False,
+        )
     except Exception as e:
         print(f"  [warn] could not load GT mesh for {label}: {e}")
         return None
