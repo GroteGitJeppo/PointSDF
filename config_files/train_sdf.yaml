@@ -56,7 +56,7 @@ pretrain_optimizer: ''    # Path to optimizer_state.pt
 # Set warm_start_decoder: true and point warm_start_decoder_path to the
 # decoder_autodecoder.pt file produced by scripts/train_autodecoder.py.
 warm_start_decoder: true
-warm_start_decoder_path: 'results/runs_autodecoder/17_03_111732'   # e.g. results/runs_autodecoder/16_03_120000/decoder_autodecoder.pt
+warm_start_decoder_path: 'results/runs_autodecoder/17_03_111732/decoder_autodecoder.pt'   # e.g. results/runs_autodecoder/16_03_120000/decoder_autodecoder.pt
 
 # Freeze decoder for the first N epochs of Stage 2 so the encoder can first
 # learn to map into the Stage 1 latent space before joint fine-tuning begins.
