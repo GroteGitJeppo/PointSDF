@@ -1,0 +1,51 @@
+# Config file for Stage 1 — Auto-Decoder Training
+# Run: python scripts/train_autodecoder.py
+#
+# The decoder and per-shape latent codes are trained jointly on complete 3D
+# SDF samples.  No encoder is used.  The resulting decoder_autodecoder.pt is
+# then used as a warm-start for Stage 2 (model/train_sdf.py).
+#
+# Architecture values (num_layers, inner_dim, latent_size, skip_connections)
+# MUST match the values in config_files/train_sdf.yaml so the Stage 2 trainer
+# can load the Stage 1 decoder weights without shape mismatches.
+
+dataset: 'Potato'
+
+# Training schedule
+epochs: 2000
+samples_per_shape: 8192       # SDF points sub-sampled per shape per step
+batch_split: 1                # Split one shape's points into N forward passes (use >1 if OOM)
+grad_accumulation_steps: 8    # Accumulate gradients over N shapes before each optimizer step
+
+# Learning rates — two separate param groups as in the DeepSDF paper.
+# Latent codes learn ~10x faster than the decoder.
+lr_decoder: 0.0001
+lr_latent:  0.001
+
+# Loss
+sigma_regulariser: 0.01       # Sigma for L2 latent regularisation
+loss_multiplier: 1.0
+clamp: true
+clamp_value: 0.1
+
+# Architecture — keep in sync with train_sdf.yaml
+num_layers: 8
+inner_dim: 256
+latent_size: 128
+skip_connections: true
+
+# Mixed precision (CUDA only)
+mixed_precision: true
+
+# LR scheduling (applied to training loss, no encoder for val inference)
+lr_scheduler: true
+lr_multiplier: 0.5
+patience: 100
+
+# Optional: Chamfer Distance validation every N epochs.
+# For each val shape a short latent-code optimisation is run against the
+# frozen decoder to obtain a reconstructed mesh.  Set to 0 to disable.
+chamfer_val_freq: 0           # 0 = disabled (slow; enable for diagnostics)
+chamfer_resolution: 40        # Marching-cubes grid resolution for val CD
+val_optimize_steps: 200       # Latent optimisation steps per val shape
+val_optimize_lr: 0.001        # Latent optimisation LR per val shape

@@ -67,13 +67,33 @@ class Trainer():
             latent_size=self.train_cfg["latent_size"],
         ).float().to(device)
 
-        # Single optimiser for both encoder and decoder
-        all_params = list(self.encoder.parameters()) + list(self.model.parameters())
-        self.optimizer = optim.Adam(
-            all_params,
-            lr=self.train_cfg["lr_model"],
-            weight_decay=0,
-        )
+        # Stage 2 warm-start: load decoder weights from Stage 1 auto-decoder
+        if self.train_cfg.get("warm_start_decoder", False):
+            ws_path = self.train_cfg["warm_start_decoder_path"]
+            ckpt = torch.load(ws_path, map_location=device)
+            self.model.load_state_dict(ckpt["decoder"])
+            print(f"[warm-start] Loaded Stage 1 decoder from {ws_path}")
+
+        # Freeze decoder for first N epochs so the encoder first learns to map
+        # into the Stage 1 latent space before joint fine-tuning begins.
+        self._freeze_epochs = self.train_cfg.get("freeze_decoder_epochs", 0)
+        if self._freeze_epochs > 0:
+            for p in self.model.parameters():
+                p.requires_grad_(False)
+            self.optimizer = optim.Adam(
+                self.encoder.parameters(),
+                lr=self.train_cfg["lr_model"],
+                weight_decay=0,
+            )
+            print(f"[freeze] Decoder frozen for first {self._freeze_epochs} epochs")
+        else:
+            # Single optimiser for both encoder and decoder (default behaviour)
+            all_params = list(self.encoder.parameters()) + list(self.model.parameters())
+            self.optimizer = optim.Adam(
+                all_params,
+                lr=self.train_cfg["lr_model"],
+                weight_decay=0,
+            )
 
         # Load pretrained weights to continue training
         if self.train_cfg["pretrained"]:
@@ -102,6 +122,37 @@ class Trainer():
 
         for epoch in tqdm(range(self.train_cfg["epochs"]), desc="Epochs", unit="epoch"):
             self.epoch = epoch
+
+            # Unfreeze decoder once freeze_decoder_epochs is reached
+            if self._freeze_epochs > 0 and epoch == self._freeze_epochs:
+                for p in self.model.parameters():
+                    p.requires_grad_(True)
+                self.optimizer = optim.Adam(
+                    [
+                        {
+                            "params": self.encoder.parameters(),
+                            "lr": self.train_cfg["lr_model"],
+                        },
+                        {
+                            "params": self.model.parameters(),
+                            "lr": self.train_cfg.get(
+                                "lr_model_unfrozen", self.train_cfg["lr_model"]
+                            ),
+                        },
+                    ],
+                    weight_decay=0,
+                )
+                # Rebuild scheduler around the new optimizer
+                if self.train_cfg["lr_scheduler"]:
+                    self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                        self.optimizer,
+                        mode="min",
+                        factor=self.train_cfg["lr_multiplier"],
+                        patience=self.train_cfg["patience"],
+                        threshold=0.0001,
+                        threshold_mode="rel",
+                    )
+                print(f"[unfreeze] Decoder unfrozen at epoch {epoch}")
 
             avg_train_loss = self.train(train_loader)
 
