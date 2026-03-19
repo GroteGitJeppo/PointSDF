@@ -19,7 +19,7 @@ encoder_dropout: 0.3      # Dropout probability in PointNet2 FC layers
 # Architecture (decoder)
 num_layers: 8             # Number of DeepSDF decoder layers
 inner_dim: 256            # Hidden dimension of the decoder
-latent_size: 128          # Latent vector size (increased from 64 for richer shape representation)
+latent_size: 32           # Latent vector size (32-dim optimal for potato tuber geometry, Blok et al. 2025)
 skip_connections: True    # Use skip connections in the decoder
 
 # Data augmentation (applied to encoder input point cloud during training)
@@ -28,8 +28,8 @@ aug_rotation: true           # Random SO(3) rotation (applied to pointcloud and 
 aug_jitter: true             # Gaussian noise on point cloud XYZ
 aug_jitter_sigma: 0.01       # Noise standard deviation
 aug_jitter_clip: 0.03        # Hard clip for jitter noise
-aug_dropout: true            # Random point dropout
-aug_dropout_ratio: 0.1       # Fraction of points to drop (10%)
+aug_dropout: true                # Random point dropout
+aug_dropout_max_ratio: 0.7       # Max fraction to drop; ratio sampled uniformly in [0, max] each call
 aug_scale: true              # Random isotropic scaling
 aug_scale_low: 0.9           # Lower bound of scale factor
 aug_scale_high: 1.1          # Upper bound of scale factor

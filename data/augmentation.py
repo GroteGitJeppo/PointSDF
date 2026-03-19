@@ -75,16 +75,23 @@ class RandomDropout:
     Randomly drop a fraction of points from the point cloud by replacing them
     with copies of randomly selected surviving points (keeps tensor size fixed).
 
+    The dropout ratio is sampled uniformly from [0, max_dropout_ratio] on each
+    call, following the PointNet++ training strategy for density robustness.
+
     Args:
-        dropout_ratio: fraction of points to drop, e.g. 0.1 drops 10% (default 0.1)
+        max_dropout_ratio: upper bound of the per-call dropout fraction (default 0.7).
+            Safe with the default pointcloud_size of 2048: at 70% dropout the
+            encoder still receives ~614 points, above SA1's 512-point requirement.
+            If pointcloud_size is reduced below ~1706, lower this accordingly.
     """
 
-    def __init__(self, dropout_ratio: float = 0.1):
-        self.dropout_ratio = dropout_ratio
+    def __init__(self, max_dropout_ratio: float = 0.7):
+        self.max_dropout_ratio = max_dropout_ratio
 
     def __call__(self, pointcloud, coords, sdf):
         n = pointcloud.shape[0]
-        num_keep = max(1, int(n * (1.0 - self.dropout_ratio)))
+        ratio = torch.rand(1, device=pointcloud.device).item() * self.max_dropout_ratio
+        num_keep = max(1, int(n * (1.0 - ratio)))
         keep_idx = torch.randperm(n, device=pointcloud.device)[:num_keep]
         kept = pointcloud[keep_idx]
         if num_keep < n:
@@ -125,8 +132,8 @@ def build_augmentation(cfg: dict) -> Compose:
         aug_jitter:          bool  (default True)
         aug_jitter_sigma:    float (default 0.01)
         aug_jitter_clip:     float (default 0.03)
-        aug_dropout:         bool  (default True)
-        aug_dropout_ratio:   float (default 0.1)
+        aug_dropout:             bool  (default True)
+        aug_dropout_max_ratio:   float (default 0.7)
         aug_scale:           bool  (default True)
         aug_scale_low:       float (default 0.9)
         aug_scale_high:      float (default 1.1)
@@ -141,7 +148,7 @@ def build_augmentation(cfg: dict) -> Compose:
         ))
     if cfg.get('aug_dropout', True):
         transforms.append(RandomDropout(
-            dropout_ratio=cfg.get('aug_dropout_ratio', 0.1),
+            max_dropout_ratio=cfg.get('aug_dropout_max_ratio', 0.7),
         ))
     if cfg.get('aug_scale', True):
         transforms.append(RandomScale(

@@ -93,8 +93,8 @@ class PointNet2Encoder(nn.Module):
         x = features.squeeze(-1)                            # (B, 1024)
 
         # FC layers
-        x = self.drop1(F.relu(self.bn1(self.fc1(x))))      # (B, 512)
-        x = self.drop2(F.relu(self.bn2(self.fc2(x))))      # (B, 256)
+        x = self.drop1(F.leaky_relu(self.bn1(self.fc1(x)), negative_slope=0.2))  # (B, 512)
+        x = self.drop2(F.leaky_relu(self.bn2(self.fc2(x)), negative_slope=0.2))  # (B, 256)
         latent = self.fc3(x)                                # (B, latent_size)
 
         return latent

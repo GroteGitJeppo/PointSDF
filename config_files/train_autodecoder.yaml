@@ -31,7 +31,7 @@ clamp_value: 0.1
 # Architecture — keep in sync with train_sdf.yaml
 num_layers: 8
 inner_dim: 256
-latent_size: 128
+latent_size: 32
 skip_connections: true
 
 # Mixed precision (CUDA only)
