@@ -34,7 +34,7 @@ class PointNet2Encoder(nn.Module):
 
         self.latent_size = latent_size
 
-        # SA1: 1024 -> 512 points, radius=0.2, 32 neighbors
+        # SA1: N -> 512 points, radius=0.2, 32 neighbors
         # 0 input feature channels — xyz only, no per-point features
         self.sa1 = PointnetSAModule(
             npoint=512,

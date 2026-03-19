@@ -14,7 +14,7 @@ class SDFModel(torch.nn.Module):
         """
         SDF model for multiple shapes.
         Args:
-            input_dim: 128 for latent space + 3 points = 131
+            input_dim: latent_size + 3 points (e.g. 32 + 3 = 35)
         """
         super(SDFModel, self).__init__()
 

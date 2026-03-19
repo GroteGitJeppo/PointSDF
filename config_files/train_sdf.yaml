@@ -48,15 +48,15 @@ lr_multiplier: 0.9        # Multiplicative factor when plateau is detected
 patience: 20              # Epochs to wait before reducing LR
 
 # Pretrained (to resume training from a checkpoint saved by this trainer)
-pretrained: true
-pretrain_weights: 'results/runs_sdf/17_03_130052/weights.pt'   # Stage 2 encoder warm-start
+pretrained: false
+pretrain_weights: ''   # Stage 2 encoder warm-start — set once a Stage 2 run exists
 pretrain_optimizer: ''    # Don't restore optimizer — start fresh with new LR
 
 # Stage 2 warm-start from a Stage 1 auto-decoder checkpoint
 # Set warm_start_decoder: true and point warm_start_decoder_path to the
 # decoder_autodecoder.pt file produced by scripts/train_autodecoder.py.
 warm_start_decoder: true
-warm_start_decoder_path: 'results/runs_autodecoder/17_03_111732/decoder_autodecoder.pt'   # e.g. results/runs_autodecoder/16_03_120000/decoder_autodecoder.pt
+warm_start_decoder_path: 'results/runs_autodecoder/19_03_185350/decoder_autodecoder.pt'
 
 # Freeze decoder for the first N epochs of Stage 2 so the encoder can first
 # learn to map into the Stage 1 latent space before joint fine-tuning begins.
@@ -68,4 +68,4 @@ lr_model_unfrozen: 0.00005    # Decoder LR once unfrozen (can match or differ fr
 # Supervised latent regression (corepp-style Stage 2)
 # Disabled for Stage 3 — encoder and decoder are jointly fine-tuned with SDF loss.
 supervised_latent: false
-supervised_latent_codes_path: 'results/runs_autodecoder/17_03_111732/latent_codes_autodecoder.pt'   # Path to latent_codes_autodecoder.pt from Stage 1
+supervised_latent_codes_path: 'results/runs_autodecoder/19_03_185350/latent_codes_autodecoder.pt'

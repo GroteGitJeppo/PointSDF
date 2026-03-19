@@ -11,7 +11,6 @@ consistent so that the decoder still sees correct supervision after augmentation
 """
 
 import torch
-import numpy as np
 
 
 class Compose:

@@ -289,6 +289,10 @@ class Trainer():
             # latent codes — no SDF coords / decoder calls at all.
             # ------------------------------------------------------------------
             if self._supervised:
+                if self.augmentation is not None:
+                    dummy_coords = torch.zeros(0, 3, device=pointcloud.device)
+                    dummy_sdf    = torch.zeros(0, 1, device=pointcloud.device)
+                    pointcloud, _, _ = self.augmentation(pointcloud, dummy_coords, dummy_sdf)
                 pc = pointcloud.to(device)
                 if pc.dim() == 2:
                     pc = pc.unsqueeze(0)        # (1, P, 3)
