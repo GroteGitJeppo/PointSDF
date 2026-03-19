@@ -67,5 +67,5 @@ lr_model_unfrozen: 0.00005    # Decoder LR once unfrozen (can match or differ fr
 
 # Supervised latent regression (corepp-style Stage 2)
 # Disabled for Stage 3 — encoder and decoder are jointly fine-tuned with SDF loss.
-supervised_latent: false
+supervised_latent: true
 supervised_latent_codes_path: 'results/runs_autodecoder/19_03_185350/latent_codes_autodecoder.pt'
