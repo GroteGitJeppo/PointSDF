@@ -18,6 +18,7 @@ Outputs (under results/runs_autodecoder/<timestamp>/):
 
 import csv
 import contextlib
+import functools
 import math
 import os
 import random
@@ -79,8 +80,8 @@ class AutoDecoderTrainer:
 
         # Mixed-precision
         use_amp = self.cfg.get("mixed_precision", False) and device.type == "cuda"
-        self.scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-        self.autocast_ctx = torch.cuda.amp.autocast if use_amp else contextlib.nullcontext
+        self.scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+        self.autocast_ctx = functools.partial(torch.amp.autocast, 'cuda') if use_amp else contextlib.nullcontext
 
         # Decoder
         self.model = sdf_model.SDFModel(
