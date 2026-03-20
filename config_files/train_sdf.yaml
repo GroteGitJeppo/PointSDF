@@ -48,8 +48,8 @@ lr_multiplier: 0.9        # Multiplicative factor when plateau is detected
 patience: 20              # Epochs to wait before reducing LR
 
 # Pretrained (to resume training from a checkpoint saved by this trainer)
-pretrained: false
-pretrain_weights: ''   # Stage 2 encoder warm-start — set once a Stage 2 run exists
+pretrained: true
+pretrain_weights: 'results/runs_sdf/19_03_201821/weights.pt'   # Stage 2 encoder warm-start — set once a Stage 2 run exists
 pretrain_optimizer: ''    # Don't restore optimizer — start fresh with new LR
 
 # Stage 2 warm-start from a Stage 1 auto-decoder checkpoint
