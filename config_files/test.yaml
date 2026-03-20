@@ -6,15 +6,15 @@ folder_sdf: '20_03_082233'        # Run folder under results/runs_sdf (set to yo
 root_dir: 'data'  # relative to PointSDF project root (contains 1_rgbd, 2_sfm, 3_pair)
 
 # Mesh extraction
-resolution: 20         # Grid resolution — matches corepp's grid_density: 20 (8k points, single decoder batch)
+resolution: 35         # Grid resolution — matches corepp's grid_density: 20 (8k points, single decoder batch)
 
 # Metric computation
 num_points_sample: 10000   # Points sampled from predicted and GT meshes for CD / F-score
 
 # Inference mode
-run_refinement: false      # If true, run iterative latent refinement after encoder forward pass
-max_inference_epochs: 300  # Only used when run_refinement: true
-lr: 0.00001
+run_refinement: true      # If true, run iterative latent refinement after encoder forward pass
+max_inference_epochs: 200  # Only used when run_refinement: true
+lr: 0.0001
 lr_scheduler: true
 lr_multiplier: 0.5
 patience: 50
