@@ -4,7 +4,7 @@ dataset: 'Potato'   # Dataset (run data/extract_sdf.py first to create results/s
 seed: 42            # Seed for reproducibility
 
 # Training
-epochs: 100
+epochs: 300
 lr_model: 0.00001   # Stage 3: low LR for joint fine-tuning of encoder + decoder
 samples_per_shape: 8192   # SDF points to subsample per shape per step (per-sample training)
 batch_split: 1   # Chunk one shape's points into this many forward passes, then one optimizer step (use >1 if OOM)
