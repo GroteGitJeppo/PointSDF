@@ -71,6 +71,11 @@ class PointNet2Encoder(nn.Module):
         self.drop2 = nn.Dropout(p=dropout)
 
         self.fc3 = nn.Linear(256, latent_size)
+        # Tanh bounds the output to (-1, 1), matching the zero-mean Gaussian prior
+        # the DeepSDF decoder was trained with.  Without this the encoder can
+        # produce latent codes far outside the decoder's training distribution,
+        # causing reconstruction artefacts at inference time.
+        self.latent_norm = nn.Tanh()
 
     def forward(self, xyz: torch.Tensor) -> torch.Tensor:
         """
@@ -95,6 +100,6 @@ class PointNet2Encoder(nn.Module):
         # FC layers
         x = self.drop1(F.leaky_relu(self.bn1(self.fc1(x)), negative_slope=0.2))  # (B, 512)
         x = self.drop2(F.leaky_relu(self.bn2(self.fc2(x)), negative_slope=0.2))  # (B, 256)
-        latent = self.fc3(x)                                # (B, latent_size)
+        latent = self.latent_norm(self.fc3(x))              # (B, latent_size), bounded (-1, 1)
 
         return latent

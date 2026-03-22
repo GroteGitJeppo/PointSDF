@@ -1,0 +1,57 @@
+# =============================================================================
+# PointSDF + PointNet2_PyTorch — combined model requirements
+# Tested stack: Python 3.10, PyTorch 2.1.0, CUDA 11.8, NVIDIA A40 (SM 8.6)
+#
+# PyTorch must be installed separately via conda BEFORE running pip install:
+#
+#   conda install pytorch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 \
+#       pytorch-cuda=11.8 -c pytorch -c nvidia
+#
+# Then install everything else:
+#
+#   pip install -r requirements.txt
+#
+# Finally, compile the pointnet2_ops CUDA extension:
+#
+#   module load cuda/11.8   # or whichever cuda module your cluster uses
+#   cd pointnet2_ops && python setup.py install && cd ..
+# =============================================================================
+
+# ── Core scientific computing ──────────────────────────────────────────────────
+numpy==1.23.5
+scipy==1.11.1
+
+# ── 3D geometry & point clouds ────────────────────────────────────────────────
+# trimesh: mesh I/O and sampling in train_sdf.py, shape_completion.py, utils_mesh.py
+trimesh==3.22.4
+
+# open3d: GPU convex-hull extraction in utils_deepsdf.extract_mesh_cuda()
+open3d==0.18.0
+
+# point-cloud-utils: SDF extraction in data/extract_sdf.py (imported as pcu)
+point-cloud-utils==0.29.6
+
+# meshplot: SDF / mesh visualisation in utils/utils_deepsdf.py
+meshplot==0.4.0
+
+# pybullet: physics utilities in utils/utils_mesh.py
+pybullet==3.2.5
+
+# ── Image / volumetric processing ─────────────────────────────────────────────
+# scikit-image: marching cubes in utils/utils_deepsdf.extract_mesh()
+scikit-image==0.21.0
+
+# ── Training utilities ─────────────────────────────────────────────────────────
+tqdm==4.64.1
+tensorboard==2.13.0
+pyyaml==6.0
+
+# ── Data analysis (test.py) ────────────────────────────────────────────────────
+pandas==2.1.0
+
+# ── Pointnet2_PyTorch data loaders ────────────────────────────────────────────
+# Only needed if you use ModelNet40 or Indoor3DSemSeg datasets from
+# Pointnet2_PyTorch/pointnet2/data/.  Safe to omit for potato-tuber training.
+h5py==3.9.0           # Indoor3DSemSegLoader.py
+lmdb==1.4.1           # ModelNet40Loader.py
+msgpack-numpy==0.4.8  # ModelNet40Loader.py

@@ -21,7 +21,15 @@ requirements = ["torch>=1.4"]
 
 exec(open(osp.join(this_dir, "_version.py")).read())
 
-os.environ["TORCH_CUDA_ARCH_LIST"] = "3.7+PTX;5.0;6.0;6.1;6.2;7.0;7.5"
+# Arch list targets GPUs commonly found on modern university clusters:
+#   6.0 / 6.1  — Pascal  (P100, GTX 1080)
+#   7.0        — Volta   (V100)
+#   7.5        — Turing  (RTX 2080, T4)
+#   8.0        — Ampere  (A100)
+#   8.6        — Ampere  (RTX 3090, A40)
+#   9.0+PTX    — Hopper  (H100) + PTX fallback for future GPUs
+# Remove architectures you don't need to speed up compilation.
+os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;7.0;7.5;8.0;8.6;9.0+PTX"
 setup(
     name="pointnet2_ops",
     version=__version__,
