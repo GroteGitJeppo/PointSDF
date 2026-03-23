@@ -40,7 +40,7 @@ point-cloud-utils==0.29.6
 #   conda install -c conda-forge meshplot
 
 # pybullet: physics utilities in utils/utils_mesh.py
-pybullet==3.2.5
+pybullet==3.2.7
 
 # ── Image / volumetric processing ─────────────────────────────────────────────
 # scikit-image: marching cubes in utils/utils_deepsdf.extract_mesh()
