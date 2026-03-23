@@ -1,11 +1,15 @@
 # =============================================================================
 # PointSDF + PointNet2_PyTorch — combined model requirements
-# Tested stack: Python 3.10, PyTorch 2.1.0, CUDA 11.8, NVIDIA A40 (SM 8.6)
+# Tested stack: Python 3.10, PyTorch 2.4.0, CUDA 11.8
 #
-# PyTorch must be installed separately via conda BEFORE running pip install:
+# PyTorch must be installed via pip BEFORE running pip install:
 #
-#   conda install pytorch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 \
-#       pytorch-cuda=11.8 -c pytorch -c nvidia
+#   pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 \
+#       --index-url https://download.pytorch.org/whl/cu118
+#
+# meshplot is NOT available on PyPI for Python 3.10 — install via conda first:
+#
+#   conda install -c conda-forge meshplot
 #
 # Then install everything else:
 #
@@ -26,13 +30,14 @@ scipy==1.11.1
 trimesh==3.22.4
 
 # open3d: GPU convex-hull extraction in utils_deepsdf.extract_mesh_cuda()
-open3d==0.18.0
+open3d==0.19.0
 
 # point-cloud-utils: SDF extraction in data/extract_sdf.py (imported as pcu)
 point-cloud-utils==0.29.6
 
 # meshplot: SDF / mesh visualisation in utils/utils_deepsdf.py
-meshplot==0.4.0
+# Not available on PyPI for Python 3.10 — install via conda before running pip:
+#   conda install -c conda-forge meshplot
 
 # pybullet: physics utilities in utils/utils_mesh.py
 pybullet==3.2.5
