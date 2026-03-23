@@ -16,6 +16,8 @@
 #   thrust/complex.h not found (torch headers): Thrust may live under CCCL as
 #     .../targets/x86_64-linux/include/cccl/thrust/ — setup.py adds -I .../include/cccl;
 #     manual: export CUDA_INCLUDE_PATH=$CONDA_PREFIX/targets/x86_64-linux/include
+#   CCCL headers may require CUDA 12+ — with PyTorch cu118, setup.py defines
+#     CCCL_IGNORE_DEPRECATED_CUDA_BELOW_12 for pointnet2_ops builds.
 #   If pip still fails with "nvcc fatal ... single input file" / duplicate -c,
 #   try: python setup.py build_ext --inplace
 #

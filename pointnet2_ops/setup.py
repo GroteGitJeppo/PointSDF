@@ -253,6 +253,10 @@ if not _thrust_inc:
         stacklevel=1,
     )
 
+# Conda may ship CCCL headers targeting CUDA 12+ while PyTorch is built with CUDA 11.8.
+# Those headers #error unless this macro is set (see cccl/cuda/std/__cccl/compiler.h).
+_CCCL_CUDA11_COMPAT = ["-DCCCL_IGNORE_DEPRECATED_CUDA_BELOW_12"]
+
 setup(
     name="pointnet2_ops",
     version=__version__,
@@ -264,8 +268,10 @@ setup(
             name="pointnet2_ops._ext",
             sources=_ext_sources,
             extra_compile_args={
-                "cxx": ["-O3"] + [f"-I{p}" for p in _thrust_inc],
-                "nvcc": ["-O3", "-Xfatbin", "-compress-all"] + [f"-I{p}" for p in _thrust_inc],
+                "cxx": ["-O3"] + _CCCL_CUDA11_COMPAT + [f"-I{p}" for p in _thrust_inc],
+                "nvcc": ["-O3", "-Xfatbin", "-compress-all"]
+                + _CCCL_CUDA11_COMPAT
+                + [f"-I{p}" for p in _thrust_inc],
             },
             include_dirs=[osp.join(this_dir, "_ext-src", "include")] + _thrust_inc,
         )
