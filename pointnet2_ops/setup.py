@@ -4,6 +4,7 @@ Run from the PointSDF root directory:
     python pointnet2_ops/setup.py install
 """
 import glob
+import importlib
 import os
 import os.path as osp
 
@@ -12,6 +13,37 @@ import os.path as osp
 # Fix: setuptools==69.5.1 (see pyproject.toml) + USE_NINJA=0 below.
 # Must force OFF: setdefault() does nothing if conda/shell already set USE_NINJA=1.
 os.environ["USE_NINJA"] = "0"
+
+
+def _patch_unixccompiler_strip_extra_c_for_nvcc():
+    """setuptools 70+ can put '-c' in cc_args; distutils UnixCCompiler._compile also adds '-c'.
+    That yields nvcc argv like: ... -c ... -c file.cu -o file.o → nvcc fatal (single input file).
+    Strip duplicate '-c' from cc_args when the driver is nvcc/hipcc and the source is .cu.
+    """
+    for mod_name in (
+        "setuptools._distutils.unixccompiler",
+        "distutils.unixccompiler",
+    ):
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError:
+            continue
+        UC = getattr(mod, "UnixCCompiler", None)
+        if UC is None or getattr(UC, "_pointnet2_ops_patched_dup_c", False):
+            continue
+        _orig_compile = UC._compile
+
+        def _compile(self, obj, src, ext, cc_args, extra_postargs, pp_opts, _orig=_orig_compile):
+            so = str(self.compiler_so)
+            if (("nvcc" in so) or ("hipcc" in so)) and str(src).endswith(".cu"):
+                cc_args = [a for a in cc_args if a != "-c"]
+            return _orig(self, obj, src, ext, cc_args, extra_postargs, pp_opts)
+
+        UC._compile = _compile  # type: ignore[assignment]
+        UC._pointnet2_ops_patched_dup_c = True  # type: ignore[attr-defined]
+
+
+_patch_unixccompiler_strip_extra_c_for_nvcc()
 
 from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
