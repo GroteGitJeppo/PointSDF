@@ -7,6 +7,7 @@ import glob
 import importlib
 import os
 import os.path as osp
+import shutil
 
 # PyTorch + setuptools (70+) + ninja can emit duplicate/malformed "-c" for nvcc/c++, causing:
 #   nvcc fatal : A single input file is required for a non-link phase when an outputfile is specified
@@ -14,20 +15,44 @@ import os.path as osp
 # Must force OFF: setdefault() does nothing if conda/shell already set USE_NINJA=1.
 os.environ["USE_NINJA"] = "0"
 
-# PyTorch reads CC and passes `-ccbin $CC` to nvcc. If someone did `export CC=UNSET`
-# (meaning to clear CC) nvcc gets a literal "UNSET" token →
+# PyTorch's cpp_extension passes `os.environ["CC"]` to nvcc as `-ccbin ...` (unix_cuda_flags).
+# Broken shells / job scripts sometimes set CC to the literal word UNSET →
 #   nvcc fatal : Don't know what to do with 'UNSET'
-# Use `unset CC CXX` in the shell instead; we drop bogus placeholders here.
-_BOGUS_CC = frozenset(
-    {"", "UNSET", "unset", "NONE", "none", "N/A", "n/a", "0", "-"}
-)
+# We therefore drop CC/CXX unless the user explicitly opts in (see below).
+
+
+def _host_compiler_token(cmd: str) -> str:
+    """First token of CC/CXX (may be 'gcc' or '/path/gcc -m64')."""
+    return cmd.strip().split()[0] if cmd.strip() else ""
+
+
+def _host_compiler_looks_valid(cmd: str) -> bool:
+    if not cmd or not cmd.strip():
+        return False
+    s = cmd.strip()
+    if s.upper() in ("UNSET", "NONE", "N/A", "FALSE", "NULL"):
+        return False
+    exe = _host_compiler_token(s)
+    if not exe:
+        return False
+    if os.path.isfile(exe) or os.path.islink(exe):
+        return True
+    return shutil.which(exe) is not None
 
 
 def _sanitize_cc_cxx_env():
-    for key in ("CC", "CXX"):
-        v = os.environ.get(key)
-        if v is not None and v.strip() in _BOGUS_CC:
-            os.environ.pop(key, None)
+    """Remove invalid CC/CXX, or clear them entirely unless POINTNET2_ALLOW_HOST_CC=1."""
+    allow = os.environ.get("POINTNET2_ALLOW_HOST_CC", "").strip() in ("1", "true", "yes", "on")
+    if allow:
+        for key in ("CC", "CXX"):
+            v = os.environ.get(key)
+            if v is not None and not _host_compiler_looks_valid(v):
+                os.environ.pop(key, None)
+        return
+    # Default: do not pass CC/CXX to PyTorch/nvcc (avoids bogus cluster env vars).
+    # nvcc then picks a sensible host compiler from PATH.
+    os.environ.pop("CC", None)
+    os.environ.pop("CXX", None)
 
 
 _sanitize_cc_cxx_env()
@@ -92,6 +117,8 @@ exec(open(osp.join(this_dir, "_version.py")).read())
 #   9.0+PTX    — Hopper  (H100) + PTX fallback for future GPUs
 # Remove architectures you don't need to speed up compilation.
 os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;7.0;7.5;8.0;8.6;9.0+PTX"
+# Re-apply after any imports (nothing should set CC, but cluster conda scripts sometimes do).
+_sanitize_cc_cxx_env()
 setup(
     name="pointnet2_ops",
     version=__version__,
