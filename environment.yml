@@ -9,6 +9,13 @@
 #   unset CC CXX   # optional — pointnet2_ops/setup.py clears CC/CXX unless
 #   POINTNET2_ALLOW_HOST_CC=1 (PyTorch would pass CC to nvcc as -ccbin; bogus CC → errors)
 #   cd pointnet2_ops && pip install --no-build-isolation . && cd ..
+#   If nvcc says "Don't know what to do with 'UNSET'": conda nvcc may inject
+#   NVCC_PREPEND_FLAGS (not shown in Python's printed argv). Check:
+#     env | grep -iE 'nvcc|ccbin|unset|CUDA_HOST|CUDAHOST'
+#   setup.py strips bogus UNSET from those vars; sync latest setup.py.
+#   thrust/complex.h not found (torch headers): conda Thrust is often under
+#     $CONDA_PREFIX/targets/x86_64-linux/include — setup.py adds -I paths;
+#     or: export CUDA_INCLUDE_PATH=.../include  (parent of thrust/)
 #   If pip still fails with "nvcc fatal ... single input file" / duplicate -c,
 #   try: python setup.py build_ext --inplace
 #

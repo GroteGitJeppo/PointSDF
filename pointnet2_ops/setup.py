@@ -8,6 +8,7 @@ import importlib
 import os
 import os.path as osp
 import shutil
+import sys
 
 # PyTorch + setuptools (70+) + ninja can emit duplicate/malformed "-c" for nvcc/c++, causing:
 #   nvcc fatal : A single input file is required for a non-link phase when an outputfile is specified
@@ -19,6 +20,11 @@ os.environ["USE_NINJA"] = "0"
 # Broken shells / job scripts sometimes set CC to the literal word UNSET →
 #   nvcc fatal : Don't know what to do with 'UNSET'
 # We therefore drop CC/CXX unless the user explicitly opts in (see below).
+#
+# Conda's nvcc is often a **shell wrapper** that injects `NVCC_PREPEND_FLAGS` / `NVCC_APPEND_FLAGS`
+# at exec time — those flags do NOT appear in Python's printed "running nvcc ..." line.
+# If e.g. `NVCC_PREPEND_FLAGS=-ccbin UNSET`, the failure is invisible in the log unless you
+# `env | grep -iE 'nvcc|unset|ccbin'` and we strip those vars here.
 
 
 def _host_compiler_token(cmd: str) -> str:
@@ -40,6 +46,30 @@ def _host_compiler_looks_valid(cmd: str) -> bool:
     return shutil.which(exe) is not None
 
 
+def _purge_unset_env_vars():
+    """Remove env vars that are literally UNSET or contain the token (nvcc wrapper / job scripts)."""
+    # Any variable whose value is exactly UNSET (case-insensitive)
+    for key in list(os.environ.keys()):
+        val = os.environ.get(key)
+        if val is not None and val.strip().upper() == "UNSET":
+            os.environ.pop(key, None)
+
+    # nvcc-related flags that may embed -ccbin UNSET without showing in Python's spawn argv
+    for key in (
+        "CC",
+        "CXX",
+        "CUDA_HOST_COMPILER",
+        "CUDAHOSTCXX",
+        "NVCC_CCBIN",
+        "NVCC_PREPEND_FLAGS",
+        "NVCC_APPEND_FLAGS",
+        "CUDA_NVCC_FLAGS",
+    ):
+        val = os.environ.get(key)
+        if val and "UNSET" in val.upper():
+            os.environ.pop(key, None)
+
+
 def _sanitize_cc_cxx_env():
     """Remove invalid CC/CXX, or clear them entirely unless POINTNET2_ALLOW_HOST_CC=1."""
     allow = os.environ.get("POINTNET2_ALLOW_HOST_CC", "").strip() in ("1", "true", "yes", "on")
@@ -55,6 +85,7 @@ def _sanitize_cc_cxx_env():
     os.environ.pop("CXX", None)
 
 
+_purge_unset_env_vars()
 _sanitize_cc_cxx_env()
 
 
@@ -108,6 +139,49 @@ requirements = ["torch>=1.4"]
 
 exec(open(osp.join(this_dir, "_version.py")).read())
 
+
+def _cuda_include_dirs_for_thrust():
+    """torch/c10 headers pull in <thrust/complex.h>. Conda CUDA often puts Thrust under
+    targets/<arch>-linux/include, not only include/, so nvcc must get explicit -I paths.
+    Avoids fragile symlinks; respects CUDA_HOME / CONDA_PREFIX / CUDA_INCLUDE_PATH.
+    """
+    dirs = []
+    try:
+        import torch.utils.cpp_extension as cpe
+
+        root = getattr(cpe, "CUDA_HOME", None) or os.environ.get("CUDA_HOME") or os.environ.get(
+            "CUDA_PATH"
+        )
+    except Exception:
+        root = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
+    if not root:
+        root = os.environ.get("CONDA_PREFIX") or sys.prefix
+
+    candidates = []
+    if root:
+        candidates.extend(
+            [
+                osp.join(root, "include"),
+                osp.join(root, "targets", "x86_64-linux", "include"),
+                osp.join(root, "targets", "sbsa-linux", "include"),
+                osp.join(root, "targets", "aarch64-linux", "include"),
+            ]
+        )
+    for part in os.environ.get("CUDA_INCLUDE_PATH", "").split(os.pathsep):
+        part = part.strip()
+        if part:
+            candidates.append(part)
+
+    seen = set()
+    for p in candidates:
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        if osp.isfile(osp.join(p, "thrust", "complex.h")):
+            dirs.append(p)
+    return dirs
+
+
 # Arch list targets GPUs commonly found on modern university clusters:
 #   6.0 / 6.1  — Pascal  (P100, GTX 1080)
 #   7.0        — Volta   (V100)
@@ -118,6 +192,7 @@ exec(open(osp.join(this_dir, "_version.py")).read())
 # Remove architectures you don't need to speed up compilation.
 os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;7.0;7.5;8.0;8.6;9.0+PTX"
 # Re-apply after any imports (nothing should set CC, but cluster conda scripts sometimes do).
+_purge_unset_env_vars()
 _sanitize_cc_cxx_env()
 setup(
     name="pointnet2_ops",
@@ -133,7 +208,8 @@ setup(
                 "cxx": ["-O3"],
                 "nvcc": ["-O3", "-Xfatbin", "-compress-all"],
             },
-            include_dirs=[osp.join(this_dir, "_ext-src", "include")],
+            include_dirs=[osp.join(this_dir, "_ext-src", "include")]
+            + _cuda_include_dirs_for_thrust(),
         )
     ],
     cmdclass={"build_ext": _BuildExt},
