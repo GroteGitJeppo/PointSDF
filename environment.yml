@@ -6,8 +6,17 @@
 # Build pointnet2_ops (after activate):
 #   export CUDA_HOME=$CONDA_PREFIX
 #   export TORCH_CUDA_ARCH_LIST="8.6"   # A40; adjust for your GPU
-#   unset CC CXX   # if nvcc gets duplicate -c / -ccbin errors
+#   unset CC CXX   # strongly recommended — avoids nvcc duplicate -c / -ccbin
 #   cd pointnet2_ops && pip install --no-build-isolation . && cd ..
+#   If pip still fails with "nvcc fatal ... single input file" / duplicate -c,
+#   try: python setup.py build_ext --inplace
+#
+# Pinning: pytorch-cuda=11.8 must match nvcc 11.8. Without an explicit cuda-nvcc
+# pin, conda may install cuda-nvcc 12.x from the default nvidia channel while
+# PyTorch stays 11.8 — then pointnet2_ops fails with a CUDA version mismatch.
+#
+# Optional after first successful create (prevents accidental nvcc upgrades):
+#   echo 'cuda-nvcc 11.8.*' >> $CONDA_PREFIX/conda-meta/pinned
 #
 # Channels: pytorch + nvidia keep PyTorch and CUDA runtime aligned; conda-forge
 # supplies gcc/gxx=11, meshplot (no PyPI wheel for py3.10), ninja.
@@ -30,18 +39,20 @@ dependencies:
   # Jupyter viz — not on PyPI for Python 3.10
   - conda-forge::meshplot
 
-  # PyTorch 2.4 + CUDA 11.8 runtime (must match pip cu118 if you ever mix)
+  # PyTorch 2.4 + CUDA 11.8 runtime
   - pytorch::pytorch=2.4.0
   - pytorch::torchvision=0.19.0
   - pytorch::torchaudio=2.4.0
   - pytorch::pytorch-cuda=11.8
 
-  # Full CUDA toolkit + nvcc 11.8 for compiling pointnet2_ops (pins avoid accidental 12+/13.x nvcc)
+  # CUDA 11.8: toolkit + nvcc MUST both come from the same label so nvcc is not 12.x
   - nvidia/label/cuda-11.8.0::cuda-toolkit=11.8.0
+  - nvidia/label/cuda-11.8.0::cuda-nvcc=11.8
 
   - pip:
-      # setuptools: avoid nvcc duplicate -c issues with some extension builds
-      - setuptools>=64,<70
+      # setuptools>=70.1: integrated bdist_wheel; old setuptools+wheel caused
+      # duplicate "-c -c" in nvcc/c++ lines with PyTorch 2.4 CUDAExtension + ninja
+      - setuptools>=70.1,<76
       - wheel
       # Align with requirements.txt — numpy/skimage binary compatibility
       - numpy==1.23.5

@@ -7,6 +7,11 @@ import glob
 import os
 import os.path as osp
 
+# PyTorch + setuptools + ninja can emit duplicate "-c" flags for nvcc/c++, causing:
+#   nvcc fatal : A single input file is required for a non-link phase when an outputfile is specified
+# Default to the legacy (non-ninja) build path; override with USE_NINJA=1 if you need ninja.
+os.environ.setdefault("USE_NINJA", "0")
+
 from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
