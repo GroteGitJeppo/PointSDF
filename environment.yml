@@ -1,0 +1,63 @@
+# PointSDF — conda environment (Python 3.10, PyTorch 2.4.0, CUDA 11.8, GCC 11)
+#
+# Create:
+#   conda env create -f environment.yml
+#
+# Build pointnet2_ops (after activate):
+#   export CUDA_HOME=$CONDA_PREFIX
+#   export TORCH_CUDA_ARCH_LIST="8.6"   # A40; adjust for your GPU
+#   unset CC CXX   # if nvcc gets duplicate -c / -ccbin errors
+#   cd pointnet2_ops && pip install --no-build-isolation . && cd ..
+#
+# Channels: pytorch + nvidia keep PyTorch and CUDA runtime aligned; conda-forge
+# supplies gcc/gxx=11, meshplot (no PyPI wheel for py3.10), ninja.
+
+name: pointsdf
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+
+  # Host compiler for pybullet, pointnet2_ops, etc.
+  - conda-forge::gcc=11
+  - conda-forge::gxx=11
+  - conda-forge::ninja
+  - conda-forge::cmake
+
+  # Jupyter viz — not on PyPI for Python 3.10
+  - conda-forge::meshplot
+
+  # PyTorch 2.4 + CUDA 11.8 runtime (must match pip cu118 if you ever mix)
+  - pytorch::pytorch=2.4.0
+  - pytorch::torchvision=0.19.0
+  - pytorch::torchaudio=2.4.0
+  - pytorch::pytorch-cuda=11.8
+
+  # Full CUDA toolkit + nvcc 11.8 for compiling pointnet2_ops (pins avoid accidental 12+/13.x nvcc)
+  - nvidia/label/cuda-11.8.0::cuda-toolkit=11.8.0
+
+  - pip:
+      # setuptools: avoid nvcc duplicate -c issues with some extension builds
+      - setuptools>=64,<70
+      - wheel
+      # Align with requirements.txt — numpy/skimage binary compatibility
+      - numpy==1.23.5
+      - scipy==1.11.1
+      - trimesh==3.22.4
+      - open3d==0.19.0
+      - point-cloud-utils==0.29.6
+      - pybullet==3.2.7
+      - scikit-image==0.21.0
+      - tqdm==4.64.1
+      - tensorboard==2.13.0
+      - pyyaml==6.0
+      - pandas==2.1.0
+      - h5py==3.9.0
+      - lmdb==1.4.1
+      - msgpack-numpy==0.4.8
+      # Transitive deps often needed for a clean pip check
+      - typing-extensions>=4.8.0
+      - python-dateutil>=2.8.0
