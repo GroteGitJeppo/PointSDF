@@ -7,6 +7,8 @@
 #   export CUDA_HOME=$CONDA_PREFIX
 #   export TORCH_CUDA_ARCH_LIST="8.6"   # A40; adjust for your GPU
 #   unset CC CXX   # strongly recommended — avoids nvcc duplicate -c / -ccbin
+#   Never `export CC=UNSET` — PyTorch passes CC to nvcc as -ccbin and you get:
+#   nvcc fatal : Don't know what to do with 'UNSET'
 #   cd pointnet2_ops && pip install --no-build-isolation . && cd ..
 #   If pip still fails with "nvcc fatal ... single input file" / duplicate -c,
 #   try: python setup.py build_ext --inplace

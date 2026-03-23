@@ -14,6 +14,24 @@ import os.path as osp
 # Must force OFF: setdefault() does nothing if conda/shell already set USE_NINJA=1.
 os.environ["USE_NINJA"] = "0"
 
+# PyTorch reads CC and passes `-ccbin $CC` to nvcc. If someone did `export CC=UNSET`
+# (meaning to clear CC) nvcc gets a literal "UNSET" token →
+#   nvcc fatal : Don't know what to do with 'UNSET'
+# Use `unset CC CXX` in the shell instead; we drop bogus placeholders here.
+_BOGUS_CC = frozenset(
+    {"", "UNSET", "unset", "NONE", "none", "N/A", "n/a", "0", "-"}
+)
+
+
+def _sanitize_cc_cxx_env():
+    for key in ("CC", "CXX"):
+        v = os.environ.get(key)
+        if v is not None and v.strip() in _BOGUS_CC:
+            os.environ.pop(key, None)
+
+
+_sanitize_cc_cxx_env()
+
 
 def _patch_unixccompiler_strip_extra_c_for_nvcc():
     """setuptools 70+ can put '-c' in cc_args; distutils UnixCCompiler._compile also adds '-c'.
