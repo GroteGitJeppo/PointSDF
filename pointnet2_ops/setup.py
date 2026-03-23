@@ -9,11 +9,17 @@ import os.path as osp
 
 # PyTorch + setuptools + ninja can emit duplicate "-c" flags for nvcc/c++, causing:
 #   nvcc fatal : A single input file is required for a non-link phase when an outputfile is specified
-# Default to the legacy (non-ninja) build path; override with USE_NINJA=1 if you need ninja.
-os.environ.setdefault("USE_NINJA", "0")
+# Must force OFF: setdefault() does nothing if conda/shell already set USE_NINJA=1.
+os.environ["USE_NINJA"] = "0"
 
 from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+
+# Prefer explicit no-ninja (PyTorch 1.13+); complements USE_NINJA=0 above.
+try:
+    _BuildExt = BuildExtension.with_options(use_ninja=False)
+except (TypeError, AttributeError):
+    _BuildExt = BuildExtension
 
 this_dir = osp.dirname(osp.abspath(__file__))
 _ext_src_root = osp.join(this_dir, "_ext-src")
@@ -52,6 +58,6 @@ setup(
             include_dirs=[osp.join(this_dir, "_ext-src", "include")],
         )
     ],
-    cmdclass={"build_ext": BuildExtension},
+    cmdclass={"build_ext": _BuildExt},
     include_package_data=True,
 )
