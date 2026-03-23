@@ -18,7 +18,10 @@
 # Finally, compile the pointnet2_ops CUDA extension:
 #
 #   module load cuda/11.8   # or whichever cuda module your cluster uses
-#   cd pointnet2_ops && python setup.py install && cd ..
+#   pip install setuptools==69.5.1   # 70+ can break PyTorch CUDAExtension nvcc argv
+#   unset CC CXX
+#   export CUDA_HOME=$CONDA_PREFIX
+#   cd pointnet2_ops && pip install --no-build-isolation . && cd ..
 # =============================================================================
 
 # ── Core scientific computing ──────────────────────────────────────────────────

@@ -7,8 +7,9 @@ import glob
 import os
 import os.path as osp
 
-# PyTorch + setuptools + ninja can emit duplicate "-c" flags for nvcc/c++, causing:
+# PyTorch + setuptools (70+) + ninja can emit duplicate/malformed "-c" for nvcc/c++, causing:
 #   nvcc fatal : A single input file is required for a non-link phase when an outputfile is specified
+# Fix: setuptools==69.5.1 (see pyproject.toml) + USE_NINJA=0 below.
 # Must force OFF: setdefault() does nothing if conda/shell already set USE_NINJA=1.
 os.environ["USE_NINJA"] = "0"
 

@@ -1,0 +1,7 @@
+# Pin setuptools for wheel builds: setuptools 70+ can mis-assemble nvcc/c++ argv for
+# torch.utils.cpp_extension.CUDAExtension (nvcc fatal: "single input file ... outputfile").
+# This applies to both `pip install .` (isolated build) and `pip install --no-build-isolation .`
+# if your env matches this pin.
+[build-system]
+requires = ["setuptools==69.5.1", "wheel"]
+build-backend = "setuptools.build_meta"

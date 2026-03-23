@@ -50,9 +50,9 @@ dependencies:
   - nvidia/label/cuda-11.8.0::cuda-nvcc=11.8
 
   - pip:
-      # setuptools>=70.1: integrated bdist_wheel; old setuptools+wheel caused
-      # duplicate "-c -c" in nvcc/c++ lines with PyTorch 2.4 CUDAExtension + ninja
-      - setuptools>=70.1,<76
+      # setuptools 70+ can break torch CUDAExtension: duplicate/malformed -c for nvcc →
+      # "nvcc fatal: A single input file is required...". Pin 69.x for pointnet2_ops builds.
+      - setuptools==69.5.1
       - wheel
       # Align with requirements.txt — numpy/skimage binary compatibility
       - numpy==1.23.5
