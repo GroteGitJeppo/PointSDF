@@ -17,6 +17,10 @@ from torchvision.transforms import v2
 from data.corepp_transforms import Pad
 
 
+class RgbdSampleError(Exception):
+    """Raised when a frame cannot be loaded safely (caller should skip)."""
+
+
 def load_intrinsics(intrinsics_file: str):
     with open(intrinsics_file) as json_file:
         data = json.load(json_file)
@@ -82,16 +86,24 @@ def histogram_filtering(dimg, mask, max_depth_range=50, max_depth_contribution=0
         else:
             z_final = z_mask_filtered
         hist_f, bin_edges_f = np.histogram(z_final, density=False)
-        norm1 = hist_f / np.sum(hist_f)
-        sel1 = bin_edges_f[np.where(norm1 >= max_depth_contribution)]
-        sel2 = bin_edges_f[np.where(norm1 >= max_depth_contribution)[0] + 1]
-        edges = np.concatenate((sel1, sel2), axis=0)
-        final_bins = np.unique(edges)
-        z_min = np.min(final_bins)
-        z_max = np.max(final_bins)
+        if hist_f.sum() == 0:
+            z_min = float(np.min(z_final))
+            z_max = float(np.max(z_final))
+        else:
+            norm1 = hist_f / hist_f.sum()
+            keep = np.where(norm1 >= max_depth_contribution)[0]
+            if keep.size == 0:
+                z_min = float(np.min(z_final))
+                z_max = float(np.max(z_final))
+            else:
+                sel1 = bin_edges_f[keep]
+                sel2 = bin_edges_f[np.minimum(keep + 1, len(bin_edges_f) - 1)]
+                edges = np.unique(np.concatenate((sel1, sel2)))
+                z_min = float(np.min(edges))
+                z_max = float(np.max(edges))
     else:
-        z_min = np.min(z_mask_filtered) if z_mask_filtered.size else 0.0
-        z_max = np.max(z_mask_filtered) if z_mask_filtered.size else 0.0
+        z_min = float(np.min(z_mask_filtered)) if z_mask_filtered.size else 0.0
+        z_max = float(np.max(z_mask_filtered)) if z_mask_filtered.size else 0.0
 
     return z_min, z_max
 
@@ -103,6 +115,9 @@ def preprocess_images(rgb, depth, mask, intrinsic_file, detection_input="mask"):
     z_min, z_max = histogram_filtering(depth, mask, 50, 0.05)
     dimg_mask[dimg_mask < z_min] = 0
     dimg_mask[dimg_mask > z_max] = 0
+
+    if not np.any(mask):
+        raise RgbdSampleError("empty mask after load")
 
     offset = 20
     indices = np.where(mask)
@@ -124,6 +139,8 @@ def preprocess_images(rgb, depth, mask, intrinsic_file, detection_input="mask"):
 
     w = max_i - min_i
     h = max_j - min_j
+    if w < 1 or h < 1:
+        raise RgbdSampleError(f"degenerate crop size {w}x{h}")
     return rgb, depth, mask, (min_i, min_j), (w, h)
 
 
@@ -195,13 +212,30 @@ class RgbdCoreppDataset(Dataset):
         )
 
         rgb = cv2.imread(image_path)
+        if rgb is None:
+            raise RgbdSampleError(f"failed to read RGB: {image_path}")
         rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
-        depth = np.load(depth_path).astype(np.float32)
-        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE) // 255
 
-        rgb, depth, mask, _crop_origin, _crop_dim = preprocess_images(
-            rgb, depth, mask, intrinsic_file, self.detection_input
-        )
+        if not os.path.isfile(depth_path):
+            raise RgbdSampleError(f"missing depth: {depth_path}")
+        depth = np.load(depth_path).astype(np.float32)
+
+        mask_img = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if mask_img is None:
+            raise RgbdSampleError(f"failed to read mask: {mask_path}")
+        mask = mask_img // 255
+
+        if rgb.shape[:2] != depth.shape[:2]:
+            raise RgbdSampleError(
+                f"RGB/depth shape mismatch {rgb.shape[:2]} vs {depth.shape} for {image_path}"
+            )
+
+        try:
+            rgb, depth, mask, _crop_origin, _crop_dim = preprocess_images(
+                rgb, depth, mask, intrinsic_file, self.detection_input
+            )
+        except (ValueError, IndexError) as e:
+            raise RgbdSampleError(f"preprocess failed for {image_path}: {e}") from e
 
         if self.normalize_depth:
             depth_original = copy.deepcopy(depth)
@@ -213,6 +247,8 @@ class RgbdCoreppDataset(Dataset):
         rgb_t = torch.from_numpy(np.array(self.tf(rgb))).permute(2, 0, 1).float() / 255.0
         depth_t = torch.from_numpy(np.array(self.tf(depth))).unsqueeze(0).float()
         mask_t = torch.from_numpy(np.array(self.tf(mask))).unsqueeze(0).float()
+        rgb_t = torch.clamp(rgb_t, 0.0, 1.0)
+        depth_t = torch.nan_to_num(depth_t, nan=0.0, posinf=0.0, neginf=0.0)
 
         return {
             "rgb": rgb_t,

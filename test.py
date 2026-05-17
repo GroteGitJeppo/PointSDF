@@ -48,10 +48,8 @@ from torch_geometric.data import Data
 from torch_geometric.typing import WITH_TORCH_CLUSTER
 from tqdm import tqdm
 
-from torch.utils.data import DataLoader
-
 from data.ply_index import load_ply_files
-from data.rgbd_corepp_dataset import RgbdCoreppDataset
+from data.rgbd_corepp_dataset import RgbdCoreppDataset, RgbdSampleError
 from models import PointNetEncoder, SDFDecoder
 from models.corepp_encoder import build_corepp_encoder, load_corepp_encoder_state
 from utils import decode_sdf_hierarchical, get_volume_coords, sdf2mesh
@@ -122,6 +120,10 @@ def _chamfer_and_pr_one_pass(gt_pcd, mesh, cd_metric: ChamferDistance, pr_metric
     and one pair of Open3D distance computations instead of two copies.
     """
     if cd_metric.prediction_is_empty(mesh):
+        return 1000.0, 0.0, 0.0, 0.0
+
+    verts = np.asarray(mesh.vertices)
+    if verts.size == 0 or not np.isfinite(verts).all():
         return 1000.0, 0.0, 0.0, 0.0
 
     gt_conv = cd_metric.convert_to_pcd(gt_pcd)
@@ -260,6 +262,10 @@ def _decode_volume(
     _sync_cuda(device)
     t_dec1 = timeit.default_timer()
     decoder_ms = (t_dec1 - t_dec0) * 1e3
+
+    if not torch.isfinite(pred_sdf).all():
+        print(f"  non-finite SDF for {unique_id}, skipping hull")
+        return grid_coords, None, float("nan"), decoder_ms, 0.0
 
     pred_volume = float("nan")
     mesh = None
@@ -557,23 +563,33 @@ def main(cfg: dict, checkpoint_path: str | None = None):
                 depth_max=float(enc_cfg.get('depth_max', 350)),
                 label_filter=test_ids,
             )
-            loader = DataLoader(rgbd_ds, batch_size=1, shuffle=False)
-            for batch in tqdm(loader, desc='Testing (CoRe++ RGB-D)'):
-                unique_id = batch['label'][0]
+            for idx in tqdm(range(len(rgbd_ds)), desc='Testing (CoRe++ RGB-D)'):
+                try:
+                    sample = rgbd_ds[idx]
+                except RgbdSampleError as e:
+                    print(f'  skip [{idx}]: {e}')
+                    continue
+
+                unique_id = sample['label']
                 if unique_id not in gt_df.index:
                     continue
-                file_name = batch['file_name'][0]
-                frame_id = batch['frame_id'][0]
-                rgb = batch['rgb'].to(device)
-                depth = batch['depth'].to(device)
+
+                file_name = sample['file_name']
+                frame_id = sample['frame_id']
+                rgb = sample['rgb'].unsqueeze(0).to(device)
+                depth = sample['depth'].unsqueeze(0).to(device)
+
                 t0 = timeit.default_timer()
                 encoder_input = torch.cat((rgb, depth), dim=1)
                 latent = encoder(encoder_input)
+                if not torch.isfinite(latent).all():
+                    print(f'  skip non-finite latent: {file_name}')
+                    continue
                 _sync_cuda(device)
                 t1 = timeit.default_timer()
                 encoder_ms = (t1 - t0) * 1e3
                 t_ls0 = timeit.default_timer()
-                latent_buffer[frame_id] = latent.detach().cpu().squeeze()
+                latent_buffer[f'{unique_id}_{frame_id}'] = latent.detach().cpu().squeeze()
                 t_ls1 = timeit.default_timer()
                 latent_save_ms = (t_ls1 - t_ls0) * 1e3
                 _run_sample(
