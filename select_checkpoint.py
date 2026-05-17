@@ -92,6 +92,7 @@ def evaluate_checkpoint(
     pre_transform,
     device,
     normalize_half_extent: float = 0.05,
+    max_hull_points: int | None = None,
 ) -> tuple[float, float, float, int, int]:
     """
     Run the full pipeline on a list of PLY files and return volume metrics.
@@ -120,7 +121,7 @@ def evaluate_checkpoint(
         pred_sdf = decoder(decoder_input)
 
         try:
-            mesh = sdf2mesh(pred_sdf, grid_coords)
+            mesh = sdf2mesh(pred_sdf, grid_coords, max_hull_points=max_hull_points)
             if mesh.is_watertight():
                 pred_volume = mesh.get_volume() * 1e6      # m³ → mL
                 gt_volumes.append(gt_volume)
@@ -186,19 +187,29 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
     # ----- Grid coords (built once) -----
     grid_resolution = cfg.get('grid_resolution', 60)
     grid_bbox = cfg.get('grid_bbox', 0.15)
+    grid_stagger_xy = bool(cfg.get('grid_stagger_xy', False))
     # grid_center shifts the query grid from the origin to the position where the
     # complete laser scans live in the scanner coordinate frame.  Required when
     # the decoder was trained on uncentered data (e.g. corepp weights).
     grid_center = torch.tensor(
         cfg.get('grid_center', [0.0, 0.0, 0.0]), dtype=torch.float, device=device
     )
-    grid_coords = get_volume_coords(resolution=grid_resolution, bbox=grid_bbox).to(device) + grid_center
+    grid_coords = get_volume_coords(
+        resolution=grid_resolution, bbox=grid_bbox, stagger_xy=grid_stagger_xy
+    ).to(device) + grid_center
     center_str = f'  center={grid_center.cpu().tolist()}' if float(grid_center.norm()) > 1e-6 else ''
-    print(f'SDF grid: {grid_resolution}³ = {grid_coords.size(0):,} points  bbox=±{grid_bbox}m{center_str}')
+    print(
+        f'SDF grid: {grid_resolution}³ = {grid_coords.size(0):,} points  '
+        f'bbox=±{grid_bbox}m  stagger_xy={grid_stagger_xy}{center_str}'
+    )
 
     pre_transform = T.Center()
     num_points = cfg.get('num_points', 1024)
     normalize_half_extent = float(cfg.get('normalize_half_extent', 0.05))
+    max_hull_points = cfg.get('max_hull_points', None)
+    if max_hull_points is not None:
+        max_hull_points = int(max_hull_points)
+        print(f'Convex hull: max_hull_points={max_hull_points:,}')
 
     # ----- Discover snapshots -----
     snapshots_dir = Path(run_dir) / 'snapshots'
@@ -233,6 +244,7 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
             encoder, decoder, ply_files, gt_df, volume_col,
             num_points, grid_coords, pre_transform, device,
             normalize_half_extent=normalize_half_extent,
+            max_hull_points=max_hull_points,
         )
 
         results.append({

@@ -53,6 +53,7 @@ from data.rgbd_corepp_dataset import RgbdCoreppDataset, RgbdSampleError
 from models import PointNetEncoder, SDFDecoder
 from models.corepp_encoder import build_corepp_encoder, load_corepp_encoder_state
 from utils import decode_sdf_hierarchical, get_volume_coords, sdf2mesh
+from utils.test_trace import TestTraceLogger, print_repo_state
 from metrics_3d.chamfer_distance import ChamferDistance
 from metrics_3d.precision_recall import PrecisionRecall
 
@@ -235,11 +236,15 @@ def _decode_volume(
     max_fine_queries: int | None,
     decode_chunk: int,
     unique_id: str,
+    trace: TestTraceLogger | None = None,
+    trace_idx: int = -1,
 ) -> tuple[torch.Tensor | None, object | None, float, float, float]:
     """Run SDF decode + convex hull.
 
     Returns (grid_coords, mesh, pred_volume_ml, decoder_ms, convex_hull_ms).
     """
+    if trace and trace.enabled:
+        trace.event(trace_idx, "decode_start", unique_id=unique_id)
     t_dec0 = timeit.default_timer()
     if hierarchical_decode:
         grid_coords, pred_sdf = decode_sdf_hierarchical(
@@ -265,11 +270,18 @@ def _decode_volume(
 
     if not torch.isfinite(pred_sdf).all():
         print(f"  non-finite SDF for {unique_id}, skipping hull")
+        if trace and trace.enabled:
+            trace.event(trace_idx, "decode_nonfinite_sdf", unique_id=unique_id)
         return grid_coords, None, float("nan"), decoder_ms, 0.0
+
+    if trace and trace.enabled:
+        trace.event(trace_idx, "decode_done", unique_id=unique_id, note=f"decoder_ms={decoder_ms:.0f}")
 
     pred_volume = float("nan")
     mesh = None
     t_hull0 = timeit.default_timer()
+    if trace and trace.enabled:
+        trace.event(trace_idx, "hull_start", unique_id=unique_id)
     try:
         mesh = sdf2mesh(pred_sdf, grid_coords)
         if mesh.is_watertight():
@@ -278,15 +290,35 @@ def _decode_volume(
             mesh.translate(-grid_center.cpu().numpy())
     except (ValueError, RuntimeError) as e:
         print(f"  Mesh extraction failed for {unique_id}: {e}")
+        if trace and trace.enabled:
+            trace.event(trace_idx, "hull_error", unique_id=unique_id, note=str(e))
     _sync_cuda(device)
     t_hull1 = timeit.default_timer()
     convex_hull_ms = (t_hull1 - t_hull0) * 1e3
+    if trace and trace.enabled:
+        trace.event(
+            trace_idx,
+            "hull_done",
+            unique_id=unique_id,
+            note=f"vol_ml={pred_volume} hull_ms={convex_hull_ms:.0f}",
+        )
     return grid_coords, mesh, pred_volume, decoder_ms, convex_hull_ms
 
 
-def main(cfg: dict, checkpoint_path: str | None = None):
+def main(
+    cfg: dict,
+    checkpoint_path: str | None = None,
+    *,
+    trace_log: str | None = None,
+    resume_from_idx: int = 0,
+    only_idx: int | None = None,
+    stop_after_idx: int | None = None,
+):
+    print_repo_state()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
+
+    trace = TestTraceLogger(trace_log)
 
     # ----- Load architecture config from the decoder config -----
     with open(cfg['decoder_config']) as f:
@@ -476,6 +508,8 @@ def main(cfg: dict, checkpoint_path: str | None = None):
         latent: torch.Tensor,
         encoder_ms: float,
         latent_save_ms: float,
+        trace_idx: int = -1,
+        frame_id: str = "",
     ) -> None:
         nonlocal grid_coords
         grid_coords, mesh, pred_volume, decoder_ms, convex_hull_ms = _decode_volume(
@@ -492,6 +526,8 @@ def main(cfg: dict, checkpoint_path: str | None = None):
             max_fine_queries=max_fine_queries,
             decode_chunk=decode_chunk,
             unique_id=unique_id,
+            trace=trace,
+            trace_idx=trace_idx,
         )
 
         chamfer_mm = float('nan')
@@ -499,6 +535,14 @@ def main(cfg: dict, checkpoint_path: str | None = None):
         rec = float('nan')
         f1 = float('nan')
         if compute_shape_metrics and mesh is not None:
+            if trace and trace.enabled:
+                trace.event(
+                    trace_idx,
+                    "chamfer_start",
+                    unique_id=unique_id,
+                    frame_id=frame_id,
+                    file_name=file_name,
+                )
             try:
                 if unique_id not in gt_pcd_cache:
                     gt_pcd_cache[unique_id] = _load_gt_pcd(
@@ -517,10 +561,38 @@ def main(cfg: dict, checkpoint_path: str | None = None):
                     prec_values.append(prec)
                     rec_values.append(rec)
                     f1_values.append(f1)
+                    if trace and trace.enabled:
+                        trace.event(
+                            trace_idx,
+                            "chamfer_done",
+                            unique_id=unique_id,
+                            frame_id=frame_id,
+                            file_name=file_name,
+                            note=f"chamfer_mm={chamfer_mm}",
+                        )
                 else:
                     print(f'  GT PLY not found for {unique_id}')
             except Exception as e:
                 print(f'  Shape metrics failed for {unique_id}: {e}')
+                if trace and trace.enabled:
+                    trace.event(
+                        trace_idx,
+                        "chamfer_error",
+                        unique_id=unique_id,
+                        frame_id=frame_id,
+                        file_name=file_name,
+                        note=str(e),
+                    )
+
+        if trace and trace.enabled:
+            trace.event(
+                trace_idx,
+                "sample_done",
+                unique_id=unique_id,
+                frame_id=frame_id,
+                file_name=file_name,
+                note=f"pred_vol_ml={pred_volume}",
+            )
 
         elapsed_ms = encoder_ms + latent_save_ms + decoder_ms + convex_hull_ms
         exec_times.append(elapsed_ms)
@@ -563,15 +635,41 @@ def main(cfg: dict, checkpoint_path: str | None = None):
                 depth_max=float(enc_cfg.get('depth_max', 350)),
                 label_filter=test_ids,
             )
-            for idx in tqdm(range(len(rgbd_ds)), desc='Testing (CoRe++ RGB-D)'):
+            n_frames = len(rgbd_ds)
+            if only_idx is not None:
+                if only_idx < 0 or only_idx >= n_frames:
+                    raise ValueError(f"--only_idx {only_idx} out of range [0, {n_frames - 1}]")
+                idx_range = [only_idx]
+                if only_idx < len(rgbd_ds.files):
+                    print(f"Single-frame debug: idx={only_idx} path={rgbd_ds.files[only_idx]}")
+            else:
+                idx_range = range(resume_from_idx, n_frames)
+
+            for idx in tqdm(idx_range, desc='Testing (CoRe++ RGB-D)'):
+                if stop_after_idx is not None and idx > stop_after_idx:
+                    break
+
+                if trace and trace.enabled:
+                    path_hint = rgbd_ds.files[idx] if idx < len(rgbd_ds.files) else ""
+                    trace.event(idx, "frame_start", file_name=path_hint)
+
                 try:
+                    if trace and trace.enabled:
+                        trace.event(idx, "load_start", file_name=rgbd_ds.files[idx] if idx < len(rgbd_ds.files) else "")
                     sample = rgbd_ds[idx]
                 except RgbdSampleError as e:
                     print(f'  skip [{idx}]: {e}')
+                    if trace and trace.enabled:
+                        trace.event(idx, "load_skip", note=str(e))
                     continue
+
+                if trace and trace.enabled:
+                    trace.event(idx, "load_done", file_name=sample["file_name"])
 
                 unique_id = sample['label']
                 if unique_id not in gt_df.index:
+                    if trace and trace.enabled:
+                        trace.event(idx, "skip_no_gt", unique_id=unique_id)
                     continue
 
                 file_name = sample['file_name']
@@ -579,15 +677,28 @@ def main(cfg: dict, checkpoint_path: str | None = None):
                 rgb = sample['rgb'].unsqueeze(0).to(device)
                 depth = sample['depth'].unsqueeze(0).to(device)
 
+                if trace and trace.enabled:
+                    trace.event(
+                        idx, "encode_start",
+                        unique_id=unique_id, frame_id=frame_id, file_name=file_name,
+                    )
                 t0 = timeit.default_timer()
                 encoder_input = torch.cat((rgb, depth), dim=1)
                 latent = encoder(encoder_input)
                 if not torch.isfinite(latent).all():
                     print(f'  skip non-finite latent: {file_name}')
+                    if trace and trace.enabled:
+                        trace.event(idx, "encode_nonfinite", unique_id=unique_id, file_name=file_name)
                     continue
                 _sync_cuda(device)
                 t1 = timeit.default_timer()
                 encoder_ms = (t1 - t0) * 1e3
+                if trace and trace.enabled:
+                    trace.event(
+                        idx, "encode_done",
+                        unique_id=unique_id, frame_id=frame_id, file_name=file_name,
+                        note=f"encoder_ms={encoder_ms:.0f}",
+                    )
                 t_ls0 = timeit.default_timer()
                 latent_buffer[f'{unique_id}_{frame_id}'] = latent.detach().cpu().squeeze()
                 t_ls1 = timeit.default_timer()
@@ -599,6 +710,8 @@ def main(cfg: dict, checkpoint_path: str | None = None):
                     latent=latent,
                     encoder_ms=encoder_ms,
                     latent_save_ms=latent_save_ms,
+                    trace_idx=idx,
+                    frame_id=frame_id,
                 )
         else:
             ply_files = load_ply_files(cfg['data_root'], test_ids, cfg.get('ply_index_csv'))
@@ -709,6 +822,7 @@ def main(cfg: dict, checkpoint_path: str | None = None):
     )
     df_out.to_csv(results_path, index=False)
     print(f'\nResults saved to: {results_path}')
+    trace.close()
 
 
 if __name__ == '__main__':
@@ -727,6 +841,28 @@ if __name__ == '__main__':
         '--grid_resolution', type=int, default=None,
         help='Override grid_resolution from config (number of voxels per axis)',
     )
+    parser.add_argument(
+        '--trace',
+        action='store_true',
+        help='Write per-frame stage log (default: results/test_trace.tsv)',
+    )
+    parser.add_argument(
+        '--trace_log',
+        default=None,
+        help='Path for --trace TSV (flushed after each stage; survives segfaults)',
+    )
+    parser.add_argument(
+        '--resume_from_idx', type=int, default=0,
+        help='Skip dataset indices below this (CoRe++ RGB-D loop only)',
+    )
+    parser.add_argument(
+        '--only_idx', type=int, default=None,
+        help='Process a single dataset index (debug one frame, e.g. 493)',
+    )
+    parser.add_argument(
+        '--stop_after_idx', type=int, default=None,
+        help='Stop after this dataset index (inclusive)',
+    )
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -735,4 +871,16 @@ if __name__ == '__main__':
     if args.grid_resolution is not None:
         cfg['grid_resolution'] = args.grid_resolution
     cfg['_year_filter'] = args.year
-    main(cfg, args.checkpoint)
+
+    trace_log = None
+    if args.trace or args.trace_log:
+        trace_log = args.trace_log or cfg.get('test_trace_log') or 'results/test_trace.tsv'
+
+    main(
+        cfg,
+        args.checkpoint,
+        trace_log=trace_log,
+        resume_from_idx=args.resume_from_idx,
+        only_idx=args.only_idx,
+        stop_after_idx=args.stop_after_idx,
+    )

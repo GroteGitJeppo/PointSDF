@@ -148,6 +148,8 @@ surface_dilation: 1
 max_fine_queries: null
 hierarchical_decode_chunk: 131072
 
+# test_trace_log: results/test_trace.tsv   # optional; or use: python test.py --trace
+
 # ---- Evaluation (corepp-compatible metrics) ----------------
 # Directory containing one sub-folder per label, each holding the
 # complete laser/SfM PLY used as GT for Chamfer and precision/recall.
