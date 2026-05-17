@@ -47,7 +47,12 @@ def get_volume_coords(
     return coords
 
 
-def sdf2mesh(pred_sdf: torch.Tensor, grid_points: torch.Tensor, t: float = 0.0):
+def sdf2mesh(
+    pred_sdf: torch.Tensor,
+    grid_points: torch.Tensor,
+    t: float = 0.0,
+    max_hull_points: int | None = None,
+):
     """
     Extract a watertight mesh from SDF predictions using convex hull.
     Convex-hull mesh extraction used in this repo for volume estimation.
@@ -60,6 +65,8 @@ def sdf2mesh(pred_sdf: torch.Tensor, grid_points: torch.Tensor, t: float = 0.0):
         pred_sdf:    (N,) or (N, 1) SDF values on CUDA
         grid_points: (N, 3) corresponding 3D positions on CUDA
         t:           threshold (default 0.0)
+        max_hull_points: if set, randomly subsample interior points to this
+            count before hull (speed vs accuracy trade-off; None = use all)
 
     Returns:
         mesh: open3d.geometry.TriangleMesh (watertight, on CPU)
@@ -71,6 +78,11 @@ def sdf2mesh(pred_sdf: torch.Tensor, grid_points: torch.Tensor, t: float = 0.0):
     pred_sdf = pred_sdf.squeeze()
     keep_idx = torch.le(pred_sdf, t)
     keep_points = grid_points[keep_idx].contiguous()
+
+    n_keep = keep_points.shape[0]
+    if max_hull_points is not None and n_keep > max_hull_points:
+        idx = torch.randperm(n_keep, device=keep_points.device)[:max_hull_points]
+        keep_points = keep_points[idx]
 
     if keep_points.shape[0] < 4:
         raise ValueError(

@@ -92,6 +92,7 @@ def evaluate_checkpoint(
     pre_transform,
     device,
     normalize_half_extent: float = 0.05,
+    max_hull_points: int | None = None,
 ) -> tuple[float, float, float, int, int]:
     """
     Run the full pipeline on a list of PLY files and return volume metrics.
@@ -120,7 +121,7 @@ def evaluate_checkpoint(
         pred_sdf = decoder(decoder_input)
 
         try:
-            mesh = sdf2mesh(pred_sdf, grid_coords)
+            mesh = sdf2mesh(pred_sdf, grid_coords, max_hull_points=max_hull_points)
             if mesh.is_watertight():
                 pred_volume = mesh.get_volume() * 1e6      # m³ → mL
                 gt_volumes.append(gt_volume)
@@ -205,6 +206,10 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
     pre_transform = T.Center()
     num_points = cfg.get('num_points', 1024)
     normalize_half_extent = float(cfg.get('normalize_half_extent', 0.05))
+    max_hull_points = cfg.get('max_hull_points', None)
+    if max_hull_points is not None:
+        max_hull_points = int(max_hull_points)
+        print(f'Convex hull: max_hull_points={max_hull_points:,}')
 
     # ----- Discover snapshots -----
     snapshots_dir = Path(run_dir) / 'snapshots'
@@ -239,6 +244,7 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
             encoder, decoder, ply_files, gt_df, volume_col,
             num_points, grid_coords, pre_transform, device,
             normalize_half_extent=normalize_half_extent,
+            max_hull_points=max_hull_points,
         )
 
         results.append({

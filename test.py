@@ -66,12 +66,27 @@ def _sync_cuda(device: torch.device) -> None:
         torch.cuda.synchronize()
 
 
-def _encoder_run_name(checkpoint_path: str) -> str:
-    """Encoder training run folder name (parent of checkpoint.pth, or above snapshots/)."""
+def _encoder_run_name(checkpoint_path: str, encoder_output_dir: str | None = None) -> str:
+    """Folder path under weights/encoder for this checkpoint, joined with underscores.
+
+    Examples (output_dir=weights/encoder):
+      .../11_05_211252/checkpoint.pth              → 11_05_211252
+      .../11_05_211252/best_vol_32/checkpoint.pth → 11_05_211252_best_vol_32
+      .../11_05_211252/snapshots/0090/checkpoint.pth → 11_05_211252_snapshots_0090
+    """
     ckpt = Path(checkpoint_path).resolve()
+    if encoder_output_dir:
+        try:
+            rel = ckpt.parent.relative_to(Path(encoder_output_dir).resolve())
+            if rel.parts:
+                return '_'.join(rel.parts)
+        except ValueError:
+            pass
     parent = ckpt.parent
     if parent.name == 'snapshots':
         return parent.parent.name
+    if parent.parent.name == 'snapshots':
+        return f'{parent.parent.parent.name}_snapshots_{parent.name}'
     return parent.name
 
 
@@ -79,13 +94,11 @@ def _test_results_path(
     checkpoint_path: str,
     results_dir: str,
     effective_resolution: int,
-    year_filter: str = 'all',
+    encoder_output_dir: str | None = None,
 ) -> str:
-    """Build results-style CSV path: test_results_<run>_<R>[_{year}].csv"""
-    run_name = _encoder_run_name(checkpoint_path)
+    """Build results CSV path: test_results_<encoder_run>_<R>.csv"""
+    run_name = _encoder_run_name(checkpoint_path, encoder_output_dir)
     filename = f'test_results_{run_name}_{effective_resolution}'
-    if year_filter != 'all':
-        filename += f'_{year_filter}'
     return str(Path(results_dir) / f'{filename}.csv')
 
 
@@ -236,6 +249,9 @@ def main(cfg: dict, checkpoint_path: str):
     if max_fine_queries is not None:
         max_fine_queries = int(max_fine_queries)
     decode_chunk = int(cfg.get('hierarchical_decode_chunk', 131072))
+    max_hull_points = cfg.get('max_hull_points', None)
+    if max_hull_points is not None:
+        max_hull_points = int(max_hull_points)
 
     # grid_center shifts the SDF query grid from the origin to the position where
     # the complete laser scans actually live in the scanner coordinate frame.
@@ -246,6 +262,8 @@ def main(cfg: dict, checkpoint_path: str):
     )
     if float(grid_center.norm()) > 1e-6:
         print(f'SDF grid center offset: {grid_center.cpu().tolist()}')
+    if max_hull_points is not None:
+        print(f'Convex hull: max_hull_points={max_hull_points:,} (random subsample of interior grid)')
 
     if hierarchical_decode:
         R_fine = (coarse_resolution - 1) * fine_subdiv + 1
@@ -373,7 +391,7 @@ def main(cfg: dict, checkpoint_path: str):
 
             t_hull0 = timeit.default_timer()
             try:
-                mesh = sdf2mesh(pred_sdf, grid_coords)
+                mesh = sdf2mesh(pred_sdf, grid_coords, max_hull_points=max_hull_points)
                 if mesh.is_watertight():
                     pred_volume = round(mesh.get_volume() * 1e6, 2)  # m³ → mL
                 # Translate mesh back to the origin so that Chamfer comparison
@@ -531,7 +549,7 @@ def main(cfg: dict, checkpoint_path: str):
         checkpoint_path,
         results_dir,
         effective_resolution,
-        year_filter=cfg.get('_year_filter', 'all'),
+        encoder_output_dir=cfg.get('output_dir', 'weights/encoder'),
     )
     df_out.to_csv(results_path, index=False)
     print(f'\nResults saved to: {results_path}')

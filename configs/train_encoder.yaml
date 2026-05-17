@@ -137,6 +137,10 @@ surface_dilation: 1
 max_fine_queries: null
 hierarchical_decode_chunk: 131072
 
+# Cap interior points passed to convex hull (test.py / select_checkpoint.py).
+# null = use all SDF<=0 grid points; lower values speed up hull at some volume cost.
+max_hull_points: 1024
+
 # ---- Evaluation (corepp-compatible metrics) ----------------
 # Directory containing one sub-folder per label, each holding the
 # complete laser/SfM PLY used as GT for Chamfer and precision/recall.
