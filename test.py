@@ -27,6 +27,10 @@ Usage:
 
     # CoRe++ RGB-D encoder (decoder from decoder_weights in config; --checkpoint optional)
     python test.py -c configs/train_encoder.yaml
+
+Results CSV:
+    <results_dir>/test_results_<encoder_run>_<grid_resolution>.csv
+    (default results_dir: results)
 """
 
 import argparse
@@ -67,6 +71,43 @@ def _sync_cuda(device: torch.device) -> None:
     """Wait for GPU work to finish so timers bracketing GPU sections are accurate."""
     if device.type == 'cuda':
         torch.cuda.synchronize()
+
+
+def _encoder_run_name(checkpoint_path: str, encoder_output_dir: str | None = None) -> str:
+    """Folder path under weights/encoder for this checkpoint, joined with underscores."""
+    ckpt = Path(checkpoint_path).resolve()
+    if encoder_output_dir:
+        try:
+            rel = ckpt.parent.relative_to(Path(encoder_output_dir).resolve())
+            if rel.parts:
+                return '_'.join(rel.parts)
+        except ValueError:
+            pass
+    parent = ckpt.parent
+    if parent.name == 'snapshots':
+        return parent.parent.name
+    if parent.parent.name == 'snapshots':
+        return f'{parent.parent.parent.name}_snapshots_{parent.name}'
+    return parent.name
+
+
+def _test_results_path(
+    *,
+    results_dir: str,
+    effective_resolution: int,
+    checkpoint_path: str | None = None,
+    encoder_output_dir: str | None = None,
+    encoder_type: str = 'pointnet',
+    enc_cfg: dict | None = None,
+) -> str:
+    """Build results CSV path: test_results_<run>_<R>.csv"""
+    if encoder_type == 'corepp_rgbd' and enc_cfg:
+        run_name = Path(enc_cfg.get('corepp_weights', 'corepp')).stem
+    elif checkpoint_path:
+        run_name = _encoder_run_name(checkpoint_path, encoder_output_dir)
+    else:
+        run_name = 'test'
+    return str(Path(results_dir) / f'test_results_{run_name}_{effective_resolution}.csv')
 
 
 def process_ply(ply_path: str, num_points: int, pre_transform, device,
@@ -236,6 +277,8 @@ def _decode_volume(
     max_fine_queries: int | None,
     decode_chunk: int,
     unique_id: str,
+    max_hull_points: int | None = None,
+    grid_stagger_xy: bool = False,
     trace: TestTraceLogger | None = None,
     trace_idx: int = -1,
 ) -> tuple[torch.Tensor | None, object | None, float, float, float]:
@@ -259,6 +302,7 @@ def _decode_volume(
             max_fine_queries=max_fine_queries,
             decode_chunk=decode_chunk,
             warn_fn=lambda msg: print(f"  {unique_id}: {msg}"),
+            stagger_xy=grid_stagger_xy,
         )
     else:
         latent_tiled = latent.expand(grid_coords.size(0), -1)
@@ -283,7 +327,7 @@ def _decode_volume(
     if trace and trace.enabled:
         trace.event(trace_idx, "hull_start", unique_id=unique_id)
     try:
-        mesh = sdf2mesh(pred_sdf, grid_coords)
+        mesh = sdf2mesh(pred_sdf, grid_coords, max_hull_points=max_hull_points)
         if mesh.is_watertight():
             pred_volume = round(mesh.get_volume() * 1e6, 2)
         if float(grid_center.norm()) > 1e-6:
@@ -358,7 +402,6 @@ def main(
         load_corepp_encoder_state(encoder, corepp_weights, device=str(device))
         print(f'Loaded CoRe++ encoder from {corepp_weights}')
 
-        results_dir = cfg.get('output_dir', os.path.dirname(decoder_weights))
     else:
         if not checkpoint_path:
             raise ValueError(
@@ -378,9 +421,10 @@ def main(
         encoder.load_state_dict(ckpt['encoder_state_dict'])
         print(f'Loaded PointNet encoder from {checkpoint_path}')
 
-        results_dir = os.path.dirname(checkpoint_path)
-
     encoder.eval()
+
+    results_dir = cfg.get('results_dir', 'results')
+    encoder_output_dir = cfg.get('output_dir', 'weights/encoder')
 
     # ----- Dataset paths -----
     splits_df = pd.read_csv(cfg['splits_csv'], delimiter=',')
@@ -422,6 +466,7 @@ def main(
     normalize_half_extent = float(cfg.get('normalize_half_extent', 0.05))
     grid_resolution = cfg.get('grid_resolution', 64)
     grid_bbox = cfg.get('grid_bbox', 0.15)
+    grid_stagger_xy = bool(cfg.get('grid_stagger_xy', False))
 
     hierarchical_decode = bool(cfg.get('hierarchical_decode', False))
     coarse_resolution = int(cfg.get('coarse_resolution', 16))
@@ -431,6 +476,9 @@ def main(
     if max_fine_queries is not None:
         max_fine_queries = int(max_fine_queries)
     decode_chunk = int(cfg.get('hierarchical_decode_chunk', 131072))
+    max_hull_points = cfg.get('max_hull_points', None)
+    if max_hull_points is not None:
+        max_hull_points = int(max_hull_points)
 
     # grid_center shifts the SDF query grid from the origin to the position where
     # the complete laser scans actually live in the scanner coordinate frame.
@@ -441,6 +489,8 @@ def main(
     )
     if float(grid_center.norm()) > 1e-6:
         print(f'SDF grid center offset: {grid_center.cpu().tolist()}')
+    if max_hull_points is not None:
+        print(f'Convex hull: max_hull_points={max_hull_points:,} (random subsample of interior grid)')
 
     if hierarchical_decode:
         R_fine = (coarse_resolution - 1) * fine_subdiv + 1
@@ -452,7 +502,18 @@ def main(
         grid_coords = None
     else:
         effective_resolution = grid_resolution
-        grid_coords = get_volume_coords(resolution=grid_resolution, bbox=grid_bbox).to(device) + grid_center
+        grid_coords = get_volume_coords(
+            resolution=grid_resolution, bbox=grid_bbox, stagger_xy=grid_stagger_xy
+        ).to(device) + grid_center
+        center_str = (
+            f'  center={grid_center.cpu().tolist()}'
+            if float(grid_center.norm()) > 1e-6
+            else ''
+        )
+        print(
+            f'SDF grid: {grid_resolution}³ = {grid_coords.size(0):,} points  '
+            f'bbox=±{grid_bbox}m  stagger_xy={grid_stagger_xy}{center_str}'
+        )
 
     # GT point clouds for corepp-compatible Chamfer / P&R
     gt_pcd_dir = cfg.get('gt_pcd_dir', None)
@@ -526,6 +587,8 @@ def main(
             max_fine_queries=max_fine_queries,
             decode_chunk=decode_chunk,
             unique_id=unique_id,
+            max_hull_points=max_hull_points,
+            grid_stagger_xy=grid_stagger_xy,
             trace=trace,
             trace_idx=trace_idx,
         )
@@ -818,8 +881,13 @@ def main(
             )
 
     os.makedirs(results_dir, exist_ok=True)
-    results_path = os.path.join(
-        results_dir, f'test_results_{effective_resolution}.csv'
+    results_path = _test_results_path(
+        results_dir=results_dir,
+        effective_resolution=effective_resolution,
+        checkpoint_path=checkpoint_path,
+        encoder_output_dir=encoder_output_dir,
+        encoder_type=encoder_type,
+        enc_cfg=enc_cfg,
     )
     df_out.to_csv(results_path, index=False)
     print(f'\nResults saved to: {results_path}')

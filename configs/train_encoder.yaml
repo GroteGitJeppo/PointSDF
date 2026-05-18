@@ -57,6 +57,8 @@ encoder:
 
 # ---- Output ------------------------------------------------
 output_dir: weights/encoder
+# test.py writes: <results_dir>/test_results_<encoder_run>_<grid_resolution>.csv
+results_dir: results
 
 # ---- Encoder training --------------------------------------
 seed:              133
@@ -139,14 +141,9 @@ delta_rep:          0.5       # margin for repulsion hinge loss
 # ---- Inference / test settings -----------------------------
 grid_resolution: 32          # resolution^3 SDF query points per sample (uniform mode only)
 grid_bbox:       0.1        # half-extent of the bounding box (metres) — matches normalize_half_extent
+grid_stagger_xy: false        # CoRe++ Grid3D: half-cell xy offset on alternating query points
 
-# grid_center: the mean centroid of the complete laser scans (in the scanner
-# coordinate frame).  The corepp decoder was trained on *uncentered* scans, so
-# all potato shapes sit near this point rather than the origin.  test.py and
-# select_checkpoint.py shift the SDF query grid by this offset so the decoder
-# is evaluated at the correct spatial location.
-#
-#
+# ---- Hierarchical decode (test.py) -----------------------------
 # Optional hierarchical decode (test.py): coarse grid + surface cells + fine
 # samples inside dilated cells. When hierarchical_decode is true, grid_resolution
 # is not used; effective fine lattice is R_fine = (coarse_resolution-1)*fine_subdiv+1.
@@ -158,6 +155,9 @@ max_fine_queries: null
 hierarchical_decode_chunk: 131072
 
 # test_trace_log: results/test_trace.tsv   # optional; or use: python test.py --trace
+# Cap interior points passed to convex hull (test.py / select_checkpoint.py).
+# null = use all SDF<=0 grid points; lower values speed up hull at some volume cost.
+max_hull_points: 2048
 
 # ---- Evaluation (corepp-compatible metrics) ----------------
 # Directory containing one sub-folder per label, each holding the
