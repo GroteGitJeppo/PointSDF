@@ -25,7 +25,7 @@ Usage:
     python test.py --config configs/train_encoder.yaml --checkpoint weights/encoder/<run>/checkpoint.pth
 
 Results CSV:
-    <results_dir>/test_results_<encoder_run>_<grid_resolution>.csv
+    <results_dir>/<encoder_weight_dir>_<grid_resolution>_t<timestamp>.csv
     (default results_dir: results)
 """
 
@@ -34,6 +34,7 @@ import glob
 import os
 import timeit
 import warnings
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -67,27 +68,25 @@ def _sync_cuda(device: torch.device) -> None:
 
 
 def _encoder_run_name(checkpoint_path: str, encoder_output_dir: str | None = None) -> str:
-    """Folder path under weights/encoder for this checkpoint, joined with underscores.
+    """Top-level run folder under weights/encoder (e.g. SLURM job id).
 
     Examples (output_dir=weights/encoder):
-      .../11_05_211252/checkpoint.pth              → 11_05_211252
-      .../11_05_211252/best_vol_32/checkpoint.pth → 11_05_211252_best_vol_32
-      .../11_05_211252/snapshots/0090/checkpoint.pth → 11_05_211252_snapshots_0090
+      .../5471226/checkpoint.pth                    → 5471226
+      .../5471226/best_vol_32/checkpoint.pth        → 5471226
+      .../5471226/snapshots/0090/checkpoint.pth     → 5471226
     """
     ckpt = Path(checkpoint_path).resolve()
     if encoder_output_dir:
         try:
             rel = ckpt.parent.relative_to(Path(encoder_output_dir).resolve())
             if rel.parts:
-                return '_'.join(rel.parts)
+                return rel.parts[0]
         except ValueError:
             pass
-    parent = ckpt.parent
-    if parent.name == 'snapshots':
-        return parent.parent.name
-    if parent.parent.name == 'snapshots':
-        return f'{parent.parent.parent.name}_snapshots_{parent.name}'
-    return parent.name
+    run_dir = ckpt.parent
+    while run_dir.name == 'snapshots' or run_dir.name.startswith('best_vol'):
+        run_dir = run_dir.parent
+    return run_dir.name
 
 
 def _test_results_path(
@@ -95,10 +94,12 @@ def _test_results_path(
     results_dir: str,
     effective_resolution: int,
     encoder_output_dir: str | None = None,
+    timestamp: str | None = None,
 ) -> str:
-    """Build results CSV path: test_results_<encoder_run>_<R>.csv"""
+    """Build results CSV path: <encoder_weight_dir>_<grid_resolution>_t<timestamp>.csv"""
     run_name = _encoder_run_name(checkpoint_path, encoder_output_dir)
-    filename = f'test_results_{run_name}_{effective_resolution}'
+    ts = timestamp or datetime.now().strftime('%d_%m_%H%M%S')
+    filename = f'{run_name}_{effective_resolution}_t{ts}'
     return str(Path(results_dir) / f'{filename}.csv')
 
 
