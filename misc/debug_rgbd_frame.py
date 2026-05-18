@@ -19,7 +19,7 @@ import yaml
 # project root on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data.rgbd_corepp_dataset import RgbdCoreppDataset, RgbdSampleError
+from data.rgbd_corepp_dataset import RgbdCoreppDataset, RgbdSampleError, resolve_depth_bounds
 from models import SDFDecoder
 from models.corepp_encoder import build_corepp_encoder, load_corepp_encoder_state
 from test import _decode_volume, _load_decoder_weights, _load_gt_pcd, _sync_cuda, _encoder_settings
@@ -72,6 +72,7 @@ def main() -> None:
         normalize_depth=bool(enc_cfg.get("normalize_depth", True)),
         depth_min=float(enc_cfg.get("depth_min", 230)),
         depth_max=float(enc_cfg.get("depth_max", 350)),
+        depth_by_year=enc_cfg.get("depth_by_year"),
         label_filter=test_ids,
     )
     print(f"Dataset size: {len(ds)}")
@@ -89,7 +90,8 @@ def main() -> None:
     unique_id = sample["label"]
     frame_id = sample["frame_id"]
     file_name = sample["file_name"]
-    print(f"  label={unique_id} frame_id={frame_id}")
+    d_min, d_max = resolve_depth_bounds(enc_cfg, unique_id)
+    print(f"  label={unique_id} frame_id={frame_id} depth_mm=[{d_min}, {d_max}]")
     print(f"  file={file_name}")
 
     rgb = sample["rgb"].unsqueeze(0).to(device)

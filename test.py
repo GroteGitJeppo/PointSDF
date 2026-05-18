@@ -633,6 +633,7 @@ def main(
                 normalize_depth=bool(enc_cfg.get('normalize_depth', True)),
                 depth_min=float(enc_cfg.get('depth_min', 230)),
                 depth_max=float(enc_cfg.get('depth_max', 350)),
+                depth_by_year=enc_cfg.get('depth_by_year'),
                 label_filter=test_ids,
             )
             n_frames = len(rgbd_ds)

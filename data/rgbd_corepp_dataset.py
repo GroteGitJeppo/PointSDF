@@ -21,6 +21,38 @@ class RgbdSampleError(Exception):
     """Raised when a frame cannot be loaded safely (caller should skip)."""
 
 
+def _label_year(label: str) -> int | None:
+    """Parse cohort year from labels like ``2025-013``."""
+    prefix = label.split("-", 1)[0]
+    if prefix.isdigit() and len(prefix) == 4:
+        return int(prefix)
+    return None
+
+
+def resolve_depth_bounds(
+    enc_cfg: dict,
+    label: str,
+    *,
+    default_min: float = 230.0,
+    default_max: float = 350.0,
+) -> tuple[float, float]:
+    """Return (depth_min, depth_max) in mm for a tuber label.
+
+    Uses ``encoder.depth_by_year`` when present (keys 2023 / 2025 or ``"2023"``),
+    otherwise ``encoder.depth_min`` / ``encoder.depth_max``.
+    """
+    by_year = enc_cfg.get("depth_by_year")
+    year = _label_year(label)
+    if by_year and year is not None:
+        entry = by_year.get(year) or by_year.get(str(year))
+        if entry is not None:
+            return float(entry["depth_min"]), float(entry["depth_max"])
+    return (
+        float(enc_cfg.get("depth_min", default_min)),
+        float(enc_cfg.get("depth_max", default_max)),
+    )
+
+
 def load_intrinsics(intrinsics_file: str):
     with open(intrinsics_file) as json_file:
         data = json.load(json_file)
@@ -156,6 +188,7 @@ class RgbdCoreppDataset(Dataset):
         normalize_depth: bool = True,
         depth_min: float = 230.0,
         depth_max: float = 350.0,
+        depth_by_year: dict | None = None,
         label_filter: set[str] | None = None,
     ):
         self.data_root = data_root
@@ -164,6 +197,7 @@ class RgbdCoreppDataset(Dataset):
         self.normalize_depth = normalize_depth
         self.depth_min = depth_min
         self.depth_max = depth_max
+        self.depth_by_year = depth_by_year or {}
         self.tf = Compose([
             Pad(size=input_size),
             v2.Resize((input_size, input_size), antialias=True),
@@ -194,9 +228,25 @@ class RgbdCoreppDataset(Dataset):
                 f"No RGB-D frames found for split={split!r} under {data_root}"
             )
         print(f"RgbdCoreppDataset [{split}]: {len(self.files)} frames")
+        if self.depth_by_year:
+            for y, bounds in sorted(self.depth_by_year.items(), key=lambda kv: str(kv[0])):
+                print(
+                    f"  depth [{y}]: min={bounds['depth_min']} max={bounds['depth_max']} mm"
+                )
+            print(f"  depth default: min={self.depth_min} max={self.depth_max} mm")
 
     def __len__(self) -> int:
         return len(self.files)
+
+    def depth_bounds_for_label(self, label: str) -> tuple[float, float]:
+        year = _label_year(label)
+        if year is not None and year in self.depth_by_year:
+            entry = self.depth_by_year[year]
+            return float(entry["depth_min"]), float(entry["depth_max"])
+        if year is not None and str(year) in self.depth_by_year:
+            entry = self.depth_by_year[str(year)]
+            return float(entry["depth_min"]), float(entry["depth_max"])
+        return self.depth_min, self.depth_max
 
     def __getitem__(self, idx: int) -> dict:
         image_path = self.files[idx]
@@ -237,12 +287,14 @@ class RgbdCoreppDataset(Dataset):
         except (ValueError, IndexError) as e:
             raise RgbdSampleError(f"preprocess failed for {image_path}: {e}") from e
 
+        depth_min, depth_max = self.depth_bounds_for_label(label)
         if self.normalize_depth:
             depth_original = copy.deepcopy(depth)
-            depth = (depth_original - self.depth_min) / (self.depth_max - self.depth_min)
+            span = depth_max - depth_min
+            depth = (depth_original - depth_min) / span if span > 0 else depth_original * 0.0
             depth[depth_original == 0] = 0
         else:
-            depth = depth / self.depth_max
+            depth = depth / depth_max
 
         rgb_t = torch.from_numpy(np.array(self.tf(rgb))).permute(2, 0, 1).float() / 255.0
         depth_t = torch.from_numpy(np.array(self.tf(depth))).unsqueeze(0).float()

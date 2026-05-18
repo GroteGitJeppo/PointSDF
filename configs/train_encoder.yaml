@@ -41,8 +41,17 @@ encoder:
   input_size: 304
   detection_input: mask
   normalize_depth: true
+  # Global fallback when a label has no entry in depth_by_year (mm, RealSense depth).
   depth_min: 230
   depth_max: 350
+  # Per-cohort bounds — 2025 tubers sit farther from the camera than 2023.
+  depth_by_year:
+    2023:
+      depth_min: 230
+      depth_max: 350
+    2025:
+      depth_min: 340
+      depth_max: 465
   rgbd_data_dir: data/3DPotatoTwin/corepp_rgbd
   corepp_weights: weights/encoder/corepp/_super3d_32_best_model.pt
 
