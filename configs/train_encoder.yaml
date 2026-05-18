@@ -42,7 +42,7 @@ seed:              133
 epochs:            100
 batch_size:        16
 num_points:        1024
-normalize_half_extent: 0.075   # center + scale every point cloud to fit in [-0.05, 0.05]^3
+normalize_half_extent: 0.1   # center + scale every point cloud to fit in [-0.05, 0.05]^3
 lr:                0.0001
 weight_decay:      0.000001
 lr_gamma:          0.97      # per-epoch decay for 100 epochs; auto-scaled to actual epoch count
