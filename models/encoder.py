@@ -53,8 +53,8 @@ class PointNetEncoder(torch.nn.Module):
         super().__init__()
         self.latent_size = latent_size
 
-        self.sa1_module = SAModule(0.5, 0.025, MLP([3, 64, 64, 128]))
-        self.sa2_module = SAModule(0.25, 0.05, MLP([128 + 3, 128, 128, 256]))
+        self.sa1_module = SAModule(0.5, 0.01, MLP([3, 64, 64, 128]))
+        self.sa2_module = SAModule(0.25, 0.02, MLP([128 + 3, 128, 128, 256]))
         self.sa3_module = GlobalSAModule(MLP([256 + 3, 256, 512, 1024]))
 
         self.latent_head = nn.Sequential(
