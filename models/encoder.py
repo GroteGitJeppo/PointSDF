@@ -48,9 +48,10 @@ class PointNetEncoder(torch.nn.Module):
     (x and y divided by their std, z scaled by std_x) so the SA modules always
     see a canonically-oriented, shape-normalised cloud.
 
-    The per-cloud scale ratio and the two PCA std values (std_x_m, std_y_m in
-    metres) are concatenated to the 1024-dim global feature before the latent
-    head so the encoder can recover both metric size and shape anisotropy.
+    The per-cloud scale ratio is concatenated to the 1024-dim global feature
+    before the latent head so the encoder can recover metric size after
+    normalisation.  PCA xy stds are computed in preprocessing but not fed to
+    the head (only geometry in data.pos).
     """
 
     def __init__(self, latent_size: int = 32):
@@ -62,7 +63,7 @@ class PointNetEncoder(torch.nn.Module):
         self.sa3_module = GlobalSAModule(MLP([256 + 3, 256, 512, 1024]))
 
         self.latent_head = nn.Sequential(
-            nn.Linear(1027, 512),   # 1024 global features + scale + std_x_m + std_y_m
+            nn.Linear(1025, 512),   # 1024 global features + scale
             nn.BatchNorm1d(512),
             nn.LeakyReLU(0.2),
             nn.Dropout(0.3),
@@ -76,7 +77,6 @@ class PointNetEncoder(torch.nn.Module):
                 data.pos      (N_total, 3)  — PCA-whitened, normalised point coords
                 data.batch    (N_total,)    — batch index per point
                 data.scale    (B, 1) or (B,) — per-cloud scale ratio
-                data.pca_stds (B, 2)        — [std_x_m, std_y_m] in metres
         Returns:
             latent: (B, latent_size)
         """
@@ -84,8 +84,7 @@ class PointNetEncoder(torch.nn.Module):
         sa1_out = self.sa1_module(*sa0_out)
         sa2_out = self.sa2_module(*sa1_out)
         sa3_out = self.sa3_module(*sa2_out)
-        x, _, _ = sa3_out                              # (B, 1024)
-        scale    = data.scale.view(-1, 1)              # (B, 1)
-        pca_stds = data.pca_stds.view(-1, 2)           # (B, 2)
-        x = torch.cat([x, scale, pca_stds], dim=1)    # (B, 1027)
+        x, _, _ = sa3_out                          # (B, 1024)
+        scale = data.scale.view(-1, 1)             # (B, 1)
+        x = torch.cat([x, scale], dim=1)           # (B, 1025)
         return self.latent_head(x)

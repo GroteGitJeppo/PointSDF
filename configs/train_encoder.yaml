@@ -47,15 +47,15 @@ lr:                0.0001
 
 # ---- PCA preprocessing (encoder input) -----------------------
 # Rotate partial scans to PCA frame, whiten x/y to unit std, z/=std_x (not std_z).
-# Encoder head expects data.pca_stds — retrain after changing (1027-dim head).
-# Smoke checks (server): one train batch has pos (1024,3), pca_stds (2,); test vs
-# dataset (no aug) same pos/scale/pca_stds; pca.enabled:false for legacy ckpts.
+# Latent head: 1024 global features + scale only (pca_stds not in head).
+# Retrain after architecture changes. pca.enabled:false for legacy preprocess.
 pca:
   enabled: true
-  mode: track_label          # per_scan | track_label (train/val) | track_online (test.py)
+  mode: per_scan         # per_scan | track_label (train/val) | track_online (test.py)
   z_scale: by_std_x          # by_std_x | none
   track_ema_alpha: 0.2       # track_online EMA in test.py
   min_points: 64
+
 weight_decay:      0.000001
 lr_gamma:          0.97      # per-epoch decay for 100 epochs; auto-scaled to actual epoch count
 sigma_regulariser: 0.01      # weight of the latent L2 regulariser
@@ -65,7 +65,7 @@ snapshot_frequency: 10       # save a checkpoint every N epochs for post-hoc vol
 # Set augmentation_enabled: false to train without any augmentation (useful for
 # debugging or ablation studies). When false, the augmentation block below is
 # ignored entirely and point clouds are loaded as-is (centered + FPS only).
-augmentation_enabled: true
+augmentation_enabled: false
 # Aggressive but bounded: strong viewpoint + distance stress without unbounded noise.
 # If val loss diverges, reduce jitter_std / scale span / dropout_max first.
 augmentation:
