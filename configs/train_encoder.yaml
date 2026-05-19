@@ -61,7 +61,7 @@ augmentation:
   jitter_clip:         0.006
   rotate_x_deg:        10.0
   rotate_y_deg:        10.0
-  rotate_z_deg:        180.0
+  rotate_z_deg:        20.0   # reduced: PCA alignment already handles belt-orientation variation
   max_shear:           0.2
   shear_prob:          0
   flip_x_prob:         0.50

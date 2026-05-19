@@ -152,18 +152,60 @@ class PointCloudLatentDataset(Dataset):
             latents[label] = torch.load(path, weights_only=True, map_location='cpu').detach().reshape(-1)
         return latents
 
-    def _load_processed_point_cloud(self, ply_path: str) -> tuple[torch.Tensor, float]:
-        """Load a PLY, centre, normalise, and FPS to num_points."""
+    @staticmethod
+    def _pca_whiten(points: torch.Tensor) -> tuple[torch.Tensor, float, float]:
+        """Rotate into PCA frame, whiten x and y, scale z by std_x.
+
+        Principal components are ordered descending by variance (PC1 = longest
+        axis, PC3 = height/minor axis).  Sign ambiguity is resolved by making
+        the largest-magnitude component of each eigenvector positive.
+
+        x and y are divided by their own std → std = 1.
+        z is divided by std_x only (proportional scaling so z is not negligible
+        relative to the whitened x/y when SA-module radii are computed).
+
+        Returns:
+            pts_pca  — transformed points in the same units as input
+            std_x_m  — std of PC1 axis before whitening (metres)
+            std_y_m  — std of PC2 axis before whitening (metres)
+        """
+        cov = (points.T @ points) / max(len(points) - 1, 1)
+        eigvals, eigvecs = torch.linalg.eigh(cov)   # ascending eigenvalues
+
+        # flip to descending order: PC1 = longest axis
+        eigvecs = eigvecs.flip(1)
+
+        # canonical sign: largest-magnitude component of each axis is positive
+        for k in range(3):
+            v = eigvecs[:, k]
+            if v[v.abs().argmax()] < 0:
+                eigvecs[:, k] = -v
+
+        pts_pca = points @ eigvecs                              # (N, 3) PCA frame
+        std_x = pts_pca[:, 0].std().clamp(min=1e-6).item()
+        std_y = pts_pca[:, 1].std().clamp(min=1e-6).item()
+
+        pts_pca = pts_pca.clone()
+        pts_pca[:, 0] /= std_x
+        pts_pca[:, 1] /= std_y
+        pts_pca[:, 2] /= std_x   # proportional: keeps z visible to SA radii
+        return pts_pca, std_x, std_y
+
+    def _load_processed_point_cloud(
+        self, ply_path: str
+    ) -> tuple[torch.Tensor, float, float, float]:
+        """Load a PLY, centre, PCA-whiten, normalise, and FPS to num_points."""
         pcd = o3d.io.read_point_cloud(ply_path)
         points = torch.tensor(np.asarray(pcd.points), dtype=torch.float32)
         points = self._center_points(points)
+        points, std_x_m, std_y_m = self._pca_whiten(points)
         points, scale = self._normalize_points(points)
         points = self._enforce_num_points(points)
-        return points, scale
+        return points, scale, std_x_m, std_y_m
 
-    def _preload_point_clouds(self) -> list[tuple[torch.Tensor, float]]:
-        """Load every scan into RAM once (centred, normalised, FPS-sampled)."""
-        cache: list[tuple[torch.Tensor, float]] = []
+    def _preload_point_clouds(self) -> list[tuple[torch.Tensor, float, float, float]]:
+        """Load every scan into RAM once (centred, PCA-whitened, normalised, FPS-sampled)."""
+        cache: list[tuple[torch.Tensor, float, float, float]] = []
         for ply_path, _, _ in tqdm(
             self.samples,
             desc=f"Preloading point clouds [{self.split}]",
@@ -361,12 +403,13 @@ class PointCloudLatentDataset(Dataset):
     def __getitem__(self, idx: int) -> Data:
         _, label, _ = self.samples[idx]
 
-        points, scale = self._pc_cache[idx]
+        points, scale, std_x_m, std_y_m = self._pc_cache[idx]
         points = points.clone()
         if self.apply_augmentation:
             points = self._augment_points(points)
         data = Data(pos=points)
-        data.scale = torch.tensor([scale], dtype=torch.float)
+        data.scale    = torch.tensor([scale],              dtype=torch.float)
+        data.pca_stds = torch.tensor([std_x_m, std_y_m],  dtype=torch.float)
 
         latent = self.latents_dict[label]  # (latent_size,) — pre-loaded at init
         # Shape (1, latent_size) so PyG's Batch concatenates to (B, latent_size)
