@@ -345,6 +345,7 @@ def main(cfg: dict):
         print('Augmentation disabled (augmentation_enabled: false).')
 
     normalize_half_extent = float(cfg.get('normalize_half_extent', 0.05))
+    pca_cfg = cfg.get('pca', {})
 
     train_ds = PointCloudLatentDataset(
         data_root=cfg['data_root'],
@@ -358,6 +359,7 @@ def main(cfg: dict):
         sdf_samples_per_shape=sdf_samples,
         sdf_clamp_value=sdf_clamp,
         normalize_half_extent=normalize_half_extent,
+        pca_cfg=pca_cfg,
     )
     val_ds = PointCloudLatentDataset(
         data_root=cfg['data_root'],
@@ -370,6 +372,7 @@ def main(cfg: dict):
         sdf_samples_per_shape=sdf_samples,
         sdf_clamp_value=sdf_clamp,
         normalize_half_extent=normalize_half_extent,
+        pca_cfg=pca_cfg,
     )
 
     # ----- Sampler selection (mutually exclusive) -----

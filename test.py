@@ -17,7 +17,7 @@ Timing (corepp-comparable):
     meaningful on GPU (small overhead vs decode cost).
   - encoder_ms, latent_save_ms, decoder_ms, convex_hull_ms segment the pipeline;
     exec_time_ms is the wall time for that whole block (same components as before).
-  - Excludes PLY load + FPS (process_ply) and Chamfer / P&R.
+  - Excludes PLY load + preprocess (PCA/whiten/FPS) and Chamfer / P&R.
   - Printed aggregate exec stats exclude the first sample (CUDA warmup), matching
     corepp's skip of the first iteration.
 
@@ -41,8 +41,6 @@ import numpy as np
 import open3d as o3d
 import pandas as pd
 import torch
-import torch_fpsample
-import torch_geometric.transforms as T
 import yaml
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 from torch_geometric.data import Data
@@ -51,7 +49,15 @@ from tqdm import tqdm
 
 from data.ply_index import load_ply_files
 from models import PointNetEncoder, SDFDecoder
-from utils import decode_sdf_hierarchical, get_volume_coords, sdf2mesh
+from utils import (
+    TrackPCAState,
+    build_track_pc1_from_ply_files,
+    decode_sdf_hierarchical,
+    get_volume_coords,
+    ply_to_encoder_data,
+    sdf2mesh,
+    sort_ply_files_for_track,
+)
 from metrics_3d.chamfer_distance import ChamferDistance
 from metrics_3d.precision_recall import PrecisionRecall
 
@@ -101,36 +107,6 @@ def _test_results_path(
     ts = timestamp or datetime.now().strftime('%d_%m_%H%M%S')
     filename = f'{run_name}_{effective_resolution}_t{ts}'
     return str(Path(results_dir) / f'{filename}.csv')
-
-
-def process_ply(ply_path: str, num_points: int, pre_transform, device,
-                normalize_half_extent: float = 0.05):
-    """Load, centre, normalise, FPS-sample a .ply file and return a batched PyG Data.
-
-    Mirrors PointCloudLatentDataset.__getitem__: centre → isotropic normalise
-    (max abs coord = normalize_half_extent) → FPS.  The scale ratio is stored
-    as data.scale so the encoder can recover metric size information.
-    """
-    pcd = o3d.io.read_point_cloud(ply_path)
-    points = torch.tensor(np.asarray(pcd.points), dtype=torch.float)
-    data = Data(pos=points)
-    data = pre_transform(data)          # centres the cloud
-    points = data.pos
-
-    # Isotropic normalisation — same as _normalize_points in encoder_dataset.py
-    max_half_extent = points.abs().max().item()
-    if max_half_extent > 1e-6:
-        scale = max_half_extent / normalize_half_extent
-        points = points / scale
-    else:
-        scale = 1.0
-
-    if points.size(0) > num_points:
-        points, _ = torch_fpsample.sample(points, num_points)
-    data = Data(pos=points)
-    data.batch = torch.zeros(points.size(0), dtype=torch.int64)
-    data.scale = torch.tensor([scale], dtype=torch.float)
-    return data.to(device)
 
 
 def _load_gt_pcd(gt_pcd_dir: str, unique_id: str, ply_pattern: str):
@@ -235,9 +211,29 @@ def main(cfg: dict, checkpoint_path: str):
 
     ply_files = load_ply_files(cfg['data_root'], test_ids, cfg.get('ply_index_csv'))
 
-    pre_transform = T.Center()
+    pca_cfg = cfg.get('pca', {})
+    pca_mode = pca_cfg.get('mode', 'track_label') if pca_cfg.get('enabled', True) else 'per_scan'
     num_points = cfg.get('num_points', 1024)
     normalize_half_extent = float(cfg.get('normalize_half_extent', 0.05))
+
+    track_pc1: dict[str, torch.Tensor] = {}
+    track_state: TrackPCAState | None = None
+    if pca_cfg.get('enabled', True):
+        if pca_mode == 'track_label':
+            print('PCA: precomputing track_label PC1 from test-split partials...')
+            track_pc1 = build_track_pc1_from_ply_files(
+                ply_files, min_points=int(pca_cfg.get('min_points', 64))
+            )
+            print(f'PCA track_label: {len(track_pc1)} tubers')
+        elif pca_mode == 'track_online':
+            ply_files = sort_ply_files_for_track(ply_files)
+            track_state = TrackPCAState(
+                ema_alpha=float(pca_cfg.get('track_ema_alpha', 0.2)),
+                min_points=int(pca_cfg.get('min_points', 64)),
+            )
+            print(f'PCA track_online: {len(ply_files)} scans sorted by label, frame_id')
+        else:
+            print('PCA mode: per_scan')
     grid_resolution = cfg.get('grid_resolution', 64)
     grid_bbox = cfg.get('grid_bbox', 0.15)
     grid_stagger_xy = bool(cfg.get('grid_stagger_xy', False))
@@ -344,7 +340,17 @@ def main(cfg: dict, checkpoint_path: str):
 
             gt_volume = float(gt_df.loc[unique_id, volume_col])
 
-            data = process_ply(ply_file, num_points, pre_transform, device, normalize_half_extent)
+            pc1_ref = track_pc1.get(unique_id) if pca_mode == 'track_label' else None
+            data = ply_to_encoder_data(
+                ply_file,
+                device,
+                pca_cfg=pca_cfg,
+                normalize_half_extent_m=normalize_half_extent,
+                num_points=num_points,
+                pc1_ref=pc1_ref,
+                track_state=track_state,
+                label=unique_id,
+            )
 
             t0 = timeit.default_timer()
             latent = encoder(data)                          # (1, latent_size)

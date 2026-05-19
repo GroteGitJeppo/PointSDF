@@ -42,8 +42,20 @@ seed:              133
 epochs:            100
 batch_size:        16
 num_points:        1024
-normalize_half_extent: 0.05   # center + scale every point cloud to fit in [-0.05, 0.05]^3
+normalize_half_extent: 0.05   # after PCA xy-whitening: isotropic fit to [-he, he]^3
 lr:                0.0001
+
+# ---- PCA preprocessing (encoder input) -----------------------
+# Rotate partial scans to PCA frame, whiten x/y to unit std, z/=std_x (not std_z).
+# Encoder head expects data.pca_stds — retrain after changing (1027-dim head).
+# Smoke checks (server): one train batch has pos (1024,3), pca_stds (2,); test vs
+# dataset (no aug) same pos/scale/pca_stds; pca.enabled:false for legacy ckpts.
+pca:
+  enabled: true
+  mode: track_label          # per_scan | track_label (train/val) | track_online (test.py)
+  z_scale: by_std_x          # by_std_x | none
+  track_ema_alpha: 0.2       # track_online EMA in test.py
+  min_points: 64
 weight_decay:      0.000001
 lr_gamma:          0.97      # per-epoch decay for 100 epochs; auto-scaled to actual epoch count
 sigma_regulariser: 0.01      # weight of the latent L2 regulariser

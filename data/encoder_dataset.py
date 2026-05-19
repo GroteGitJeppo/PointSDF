@@ -6,44 +6,52 @@ import numpy as np
 import open3d as o3d
 import pandas as pd
 import torch
-import torch_fpsample
 from torch.utils.data import Dataset, Sampler
 from torch_geometric.data import Data
 from tqdm import tqdm
 
 from data.sdf_samples import resolve_samples_npz
+from utils.pca_preprocess import (
+    center_points,
+    preprocess_point_cloud,
+    precompute_track_pc1,
+)
 
 
 def _remove_nans(t: torch.Tensor) -> torch.Tensor:
     return t[~torch.isnan(t[:, 3])]
 
 
+def _parse_pca_cfg(cfg: dict | None) -> dict:
+    defaults = {
+        'enabled': True,
+        'mode': 'track_label',
+        'z_scale': 'by_std_x',
+        'track_ema_alpha': 0.2,
+        'min_points': 64,
+    }
+    if cfg is None:
+        return defaults
+    out = defaults.copy()
+    out.update(cfg)
+    return out
+
+
 class PointCloudLatentDataset(Dataset):
     """
     Dataset for Stage 2 (encoder training).
 
-    At construction time, all partial point clouds are loaded from disk once,
-    centred, normalised, and FPS-sampled into RAM (mirrors corepp DeepSDF
-    ``SDFSamples(load_ram=True)``).  Latent codes and optional SDF samples are
-    also pre-loaded.  ``__getitem__`` only clones the cached cloud and applies
-    augmentation.
+    At construction time, partial point clouds are loaded and **centroid-centered**
+    into RAM.  ``__getitem__`` applies augmentation (train), then PCA + xy-whitening,
+    isotropic normalisation, and FPS.
 
-    Latent codes must be saved as individual tensors: <latent_dir>/<label>.pth
+    Latent codes: ``<latent_dir>/<label>.pth``
 
-    Optionally loads SDF samples from samples.npz for each label so that the
-    training loop can also compute an end-to-end SDF loss through the frozen
-    decoder.  When sdf_data_dir is provided, only labels whose samples.npz
-    exists are kept (a warning is printed for excluded labels).
-
-    Each __getitem__ returns a PyG Data object with:
-        data.pos        — (num_points, 3) centred, normalised, FPS-sampled point cloud
-        data.scale      — (1,) ratio original_half_extent / normalize_half_extent;
-                          multiply normalised coords by this to recover metric coords
-        data.latent     — (1, latent_size) ground-truth latent code
-        data.sdf_xyz    — (1, sdf_samples_per_shape, 3) SDF query points
-                          (only when sdf_data_dir is configured)
-        data.sdf_gt     — (1, sdf_samples_per_shape, 1) ground-truth SDF values
-                          (only when sdf_data_dir is configured)
+    Each ``__getitem__`` returns a PyG ``Data`` with:
+        data.pos        — (num_points, 3) preprocessed for PointNet++
+        data.scale      — isotropic normalisation scale ratio
+        data.pca_stds   — (2,) [std_x_m, std_y_m] before whitening (zeros if PCA off)
+        data.latent     — (1, latent_size) ground-truth Stage 1 latent
     """
 
     def __init__(
@@ -59,6 +67,7 @@ class PointCloudLatentDataset(Dataset):
         sdf_samples_per_shape: int = 1024,
         sdf_clamp_value: float | None = None,
         normalize_half_extent: float = 0.05,
+        pca_cfg: dict | None = None,
     ):
         self.latent_dir = latent_dir
         self.split = split
@@ -67,12 +76,12 @@ class PointCloudLatentDataset(Dataset):
         self._sdf_samples_per_shape = sdf_samples_per_shape
         self._sdf_clamp = sdf_clamp_value
         self.normalize_half_extent = normalize_half_extent
+        self.pca_cfg = _parse_pca_cfg(pca_cfg)
         self.augmentation_cfg = self._parse_augmentation_cfg(augmentation_cfg)
 
         splits_df = pd.read_csv(splits_csv)
         labels = set(splits_df[splits_df['split'] == split]['label'].astype(str))
 
-        # Build candidate sample list — (ply_path, label, latent_path)
         candidates: list[tuple[str, str, str]] = []
         for ply_file in Path(data_root).rglob('*.ply'):
             label = ply_file.parent.name
@@ -90,7 +99,6 @@ class PointCloudLatentDataset(Dataset):
                 f"produced by train_deepsdf.py."
             )
 
-        # Load SDF data (optional) — pre-loaded into RAM, keyed by label
         self._sdf_ram: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None
         if sdf_data_dir is not None:
             self._sdf_ram = {}
@@ -112,7 +120,6 @@ class PointCloudLatentDataset(Dataset):
                     f"{len(missing)} label(s) have no samples.npz and will be excluded "
                     f"from training: {missing[:5]}{'...' if len(missing) > 5 else ''}"
                 )
-                # Remove those labels so every item in the batch has SDF data
                 candidates = [(p, l, lp) for p, l, lp in candidates if l not in missing]
 
             print(
@@ -127,95 +134,62 @@ class PointCloudLatentDataset(Dataset):
                 f"No samples remaining for split='{split}' after SDF filtering."
             )
 
-        # Eagerly load all latent codes into RAM so __getitem__ never hits the
-        # filesystem per step (important on networked / HPC storage).
         self.latents_dict: dict[str, torch.Tensor] = self._load_latents_dict(
             {lbl: lp for _, lbl, lp in self.samples}
         )
 
-        self._pc_cache: list[tuple[torch.Tensor, float]] = self._preload_point_clouds()
+        self._pc_cache: list[torch.Tensor] = self._preload_point_clouds()
+        self._track_pc1: dict[str, torch.Tensor] = self._build_track_pc1()
 
-        print(f"PointCloudLatentDataset [{split}]: {len(self.samples)} samples")
-
-    # ------------------------------------------------------------------
+        pca_on = self.pca_cfg['enabled']
+        mode = self.pca_cfg['mode']
+        print(
+            f"PointCloudLatentDataset [{split}]: {len(self.samples)} samples "
+            f"(pca={'on' if pca_on else 'off'}, mode={mode if pca_on else 'n/a'}, "
+            f"track_pc1={len(self._track_pc1)} labels)"
+        )
 
     @staticmethod
     def _load_latents_dict(label_to_path: dict[str, str]) -> dict[str, torch.Tensor]:
-        """Load all per-fruit latent codes into RAM once at construction time.
-
-        Mirrors corepp's ``get_latents_dict`` but uses ``weights_only=True``
-        for safety and detaches the tensors so they are never part of any
-        computation graph.
-        """
         latents: dict[str, torch.Tensor] = {}
         for label, path in label_to_path.items():
             latents[label] = torch.load(path, weights_only=True, map_location='cpu').detach().reshape(-1)
         return latents
 
-    @staticmethod
-    def _pca_whiten(points: torch.Tensor) -> tuple[torch.Tensor, float, float]:
-        """Rotate into PCA frame, whiten x and y, scale z by std_x.
-
-        Principal components are ordered descending by variance (PC1 = longest
-        axis, PC3 = height/minor axis).  Sign ambiguity is resolved by making
-        the largest-magnitude component of each eigenvector positive.
-
-        x and y are divided by their own std → std = 1.
-        z is divided by std_x only (proportional scaling so z is not negligible
-        relative to the whitened x/y when SA-module radii are computed).
-
-        Returns:
-            pts_pca  — transformed points in the same units as input
-            std_x_m  — std of PC1 axis before whitening (metres)
-            std_y_m  — std of PC2 axis before whitening (metres)
-        """
-        cov = (points.T @ points) / max(len(points) - 1, 1)
-        eigvals, eigvecs = torch.linalg.eigh(cov)   # ascending eigenvalues
-
-        # flip to descending order: PC1 = longest axis
-        eigvecs = eigvecs.flip(1)
-
-        # canonical sign: largest-magnitude component of each axis is positive
-        for k in range(3):
-            v = eigvecs[:, k]
-            if v[v.abs().argmax()] < 0:
-                eigvecs[:, k] = -v
-
-        pts_pca = points @ eigvecs                              # (N, 3) PCA frame
-        std_x = pts_pca[:, 0].std().clamp(min=1e-6).item()
-        std_y = pts_pca[:, 1].std().clamp(min=1e-6).item()
-
-        pts_pca = pts_pca.clone()
-        pts_pca[:, 0] /= std_x
-        pts_pca[:, 1] /= std_y
-        pts_pca[:, 2] /= std_x   # proportional: keeps z visible to SA radii
-        return pts_pca, std_x, std_y
-
-    def _load_processed_point_cloud(
-        self, ply_path: str
-    ) -> tuple[torch.Tensor, float, float, float]:
-        """Load a PLY, centre, PCA-whiten, normalise, and FPS to num_points."""
+    def _load_centered_point_cloud(self, ply_path: str) -> torch.Tensor:
         pcd = o3d.io.read_point_cloud(ply_path)
         points = torch.tensor(np.asarray(pcd.points), dtype=torch.float32)
-        points = self._center_points(points)
-        points, std_x_m, std_y_m = self._pca_whiten(points)
-        points, scale = self._normalize_points(points)
-        points = self._enforce_num_points(points)
-        return points, scale, std_x_m, std_y_m
+        return center_points(points)
 
-    def _preload_point_clouds(self) -> list[tuple[torch.Tensor, float, float, float]]:
-        """Load every scan into RAM once (centred, PCA-whitened, normalised, FPS-sampled)."""
-        cache: list[tuple[torch.Tensor, float, float, float]] = []
+    def _preload_point_clouds(self) -> list[torch.Tensor]:
+        cache: list[torch.Tensor] = []
         for ply_path, _, _ in tqdm(
             self.samples,
             desc=f"Preloading point clouds [{self.split}]",
             unit="scan",
         ):
-            cache.append(self._load_processed_point_cloud(ply_path))
+            cache.append(self._load_centered_point_cloud(ply_path))
         return cache
 
+    def _build_track_pc1(self) -> dict[str, torch.Tensor]:
+        if not self.pca_cfg['enabled'] or self.pca_cfg['mode'] != 'track_label':
+            return {}
+        min_pts = int(self.pca_cfg['min_points'])
+        label_to_points: dict[str, list[torch.Tensor]] = {}
+        for (_, label, _), pts in zip(self.samples, self._pc_cache):
+            if pts.size(0) >= 2:
+                label_to_points.setdefault(label, []).append(pts)
+        return precompute_track_pc1(label_to_points, min_points=min_pts)
+
+    def _pc1_ref_for_label(self, label: str, points: torch.Tensor) -> torch.Tensor | None:
+        if not self.pca_cfg['enabled']:
+            return None
+        mode = self.pca_cfg['mode']
+        if mode == 'track_label':
+            return self._track_pc1.get(label)
+        return None
+
     def _parse_augmentation_cfg(self, cfg: dict | None) -> dict:
-        # Backward-compatible defaults approximate previous behaviour.
         defaults = {
             "jitter_std": 5e-4,
             "jitter_clip": 1e-3,
@@ -240,35 +214,6 @@ class PointCloudLatentDataset(Dataset):
         out.update(cfg)
         return out
 
-    def _center_points(self, points: torch.Tensor) -> torch.Tensor:
-        center = points.mean(dim=0, keepdim=True)
-        return points - center
-
-    def _normalize_points(self, points: torch.Tensor) -> tuple[torch.Tensor, float]:
-        """Scale points isotropically so the max absolute coordinate equals
-        normalize_half_extent.  Returns the normalised points and the scale
-        ratio (original_half_extent / normalize_half_extent) needed to recover
-        metric coordinates: metric_coord = normalised_coord * scale.
-        """
-        max_half_extent = points.abs().max().item()
-        if max_half_extent < 1e-6:
-            return points, 1.0
-        scale = max_half_extent / self.normalize_half_extent
-        return points / scale, scale
-
-    def _enforce_num_points(self, points: torch.Tensor) -> torch.Tensor:
-        n = points.size(0)
-        if n == self.num_points:
-            return points
-        if n > self.num_points:
-            sampled, _ = torch_fpsample.sample(points, self.num_points)
-            return sampled
-        if n == 0:
-            return torch.zeros((self.num_points, 3), dtype=torch.float32)
-        extra_idx = torch.randint(0, n, (self.num_points - n,))
-        extras = points[extra_idx]
-        return torch.cat([points, extras], dim=0)
-
     @staticmethod
     def _rotation_matrix_xyz(rx: float, ry: float, rz: float) -> torch.Tensor:
         cx, sx = math.cos(rx), math.sin(rx)
@@ -281,10 +226,6 @@ class PointCloudLatentDataset(Dataset):
 
     @staticmethod
     def _apply_shear_x(points: torch.Tensor, max_shear: float) -> torch.Tensor:
-        """X-direction shear matching corepp/data_preparation/augment.py.
-
-        x' = x + s0 * y + s1 * z,  with s0, s1 ~ Uniform(-max_shear, max_shear).
-        """
         if max_shear <= 0.0:
             return points
         shear = np.random.uniform(-max_shear, max_shear, size=(2,))
@@ -309,8 +250,7 @@ class PointCloudLatentDataset(Dataset):
         if keep_n == n:
             return kept
         refill_idx = torch.randint(0, keep_n, (n - keep_n,))
-        refill = kept[refill_idx]
-        return torch.cat([kept, refill], dim=0)
+        return torch.cat([kept, kept[refill_idx]], dim=0)
 
     def _occlude_points(self, points: torch.Tensor, occ_ratio: float) -> torch.Tensor:
         n = points.size(0)
@@ -328,37 +268,30 @@ class PointCloudLatentDataset(Dataset):
         kept = points[keep_mask]
         keep_n = kept.size(0)
         refill_idx = torch.randint(0, keep_n, (n - keep_n,))
-        refill = kept[refill_idx]
-        return torch.cat([kept, refill], dim=0)
+        return torch.cat([kept, kept[refill_idx]], dim=0)
 
     def _augment_points(self, points: torch.Tensor) -> torch.Tensor:
         cfg = self.augmentation_cfg
 
-        # Random rotations in degrees around xyz.
         rx = math.radians(np.random.uniform(-cfg["rotate_x_deg"], cfg["rotate_x_deg"]))
         ry = math.radians(np.random.uniform(-cfg["rotate_y_deg"], cfg["rotate_y_deg"]))
         rz = math.radians(np.random.uniform(-cfg["rotate_z_deg"], cfg["rotate_z_deg"]))
         rot = self._rotation_matrix_xyz(rx, ry, rz).to(points.dtype)
         points = points @ rot.T
 
-        # X-direction shear (CoRe++ augment.py: T[0,1], T[0,2]).
         if np.random.rand() < float(cfg["shear_prob"]):
             points = self._apply_shear_x(points, float(cfg["max_shear"]))
 
-        # Left-right flip around x (physically plausible for conveyor setup).
         if np.random.rand() < float(cfg["flip_x_prob"]):
             points[:, 0] = -points[:, 0]
 
-        # Isotropic scaling.
         s_min = float(cfg["scale_min"])
         s_max = float(cfg["scale_max"])
         if s_max < s_min:
             s_min, s_max = s_max, s_min
         if s_max > 0:
-            scale = float(np.random.uniform(s_min, s_max))
-            points = points * scale
+            points = points * float(np.random.uniform(s_min, s_max))
 
-        # Gaussian jitter with clipping.
         std = float(cfg["jitter_std"])
         if std > 0.0:
             noise = torch.randn_like(points) * std
@@ -367,7 +300,6 @@ class PointCloudLatentDataset(Dataset):
                 noise = torch.clamp(noise, -clip, clip)
             points = points + noise
 
-        # Random point dropout.
         if np.random.rand() < float(cfg["point_dropout_prob"]):
             dr_min = float(cfg["point_dropout_min"])
             dr_max = float(cfg["point_dropout_max"])
@@ -376,7 +308,6 @@ class PointCloudLatentDataset(Dataset):
             drop_ratio = float(np.random.uniform(dr_min, dr_max))
             points = self._dropout_points(points, max(0.0, min(drop_ratio, 0.95)))
 
-        # Occlusion-like local removal/refill.
         if np.random.rand() < float(cfg["occlusion_prob"]):
             or_min = float(cfg["occlusion_ratio_min"])
             or_max = float(cfg["occlusion_ratio_max"])
@@ -388,10 +319,6 @@ class PointCloudLatentDataset(Dataset):
         return points
 
     def get_label_to_indices(self) -> dict[str, list[int]]:
-        """Return a mapping from label → list of dataset indices for that label.
-
-        Used by TuberBatchSampler to guarantee same-label pairs per batch.
-        """
         mapping: dict[str, list[int]] = {}
         for i, (_, label, _) in enumerate(self.samples):
             mapping.setdefault(label, []).append(i)
@@ -403,30 +330,35 @@ class PointCloudLatentDataset(Dataset):
     def __getitem__(self, idx: int) -> Data:
         _, label, _ = self.samples[idx]
 
-        points, scale, std_x_m, std_y_m = self._pc_cache[idx]
-        points = points.clone()
+        points = self._pc_cache[idx].clone()
         if self.apply_augmentation:
             points = self._augment_points(points)
+
+        pc1_ref = self._pc1_ref_for_label(label, points)
+        points, scale, pca_stds = preprocess_point_cloud(
+            points,
+            pca_enabled=bool(self.pca_cfg['enabled']),
+            pc1_ref=pc1_ref,
+            normalize_half_extent_m=self.normalize_half_extent,
+            z_scale=self.pca_cfg['z_scale'],
+            num_points=self.num_points,
+            min_points=int(self.pca_cfg['min_points']),
+        )
+
         data = Data(pos=points)
-        data.scale    = torch.tensor([scale],              dtype=torch.float)
-        data.pca_stds = torch.tensor([std_x_m, std_y_m],  dtype=torch.float)
+        data.scale = torch.tensor([scale], dtype=torch.float)
+        data.pca_stds = pca_stds
 
-        latent = self.latents_dict[label]  # (latent_size,) — pre-loaded at init
-        # Shape (1, latent_size) so PyG's Batch concatenates to (B, latent_size)
+        latent = self.latents_dict[label]
         data.latent = latent.unsqueeze(0)
-
-        # Expose the tuber label so the training loop can form contrastive pairs
-        # (mirrors corepp's fruit_id). PyG Batch collates strings as a plain list.
         data.label = label
 
-        # SDF samples — shape (1, N_sdf, 3/1) so Batch gives (B, N_sdf, 3/1)
         if self._sdf_ram is not None and label in self._sdf_ram:
             pos_t, neg_t = self._sdf_ram[label]
             half = self._sdf_samples_per_shape // 2
-
             pos_idx = torch.randint(0, pos_t.size(0), (half,))
             neg_idx = torch.randint(0, neg_t.size(0), (half,))
-            sdf_samples = torch.cat([pos_t[pos_idx], neg_t[neg_idx]], dim=0)  # (N_sdf, 4)
+            sdf_samples = torch.cat([pos_t[pos_idx], neg_t[neg_idx]], dim=0)
 
             if self._sdf_clamp is not None:
                 sdf_samples = sdf_samples.clone()
@@ -434,28 +366,14 @@ class PointCloudLatentDataset(Dataset):
                     sdf_samples[:, 3], -self._sdf_clamp, self._sdf_clamp
                 )
 
-            data.sdf_xyz = sdf_samples[:, :3].unsqueeze(0)   # (1, N_sdf, 3)
-            data.sdf_gt  = sdf_samples[:, 3:4].unsqueeze(0)  # (1, N_sdf, 1)
+            data.sdf_xyz = sdf_samples[:, :3].unsqueeze(0)
+            data.sdf_gt = sdf_samples[:, 3:4].unsqueeze(0)
 
         return data
 
 
 class TuberBatchSampler(Sampler):
-    """Batch sampler that guarantees same-label (same-tuber) pairs in every batch.
-
-    Each batch contains exactly ``k_scans`` random scans from each of
-    ``n_labels`` randomly chosen tubers, giving an effective batch size of
-    ``n_labels * k_scans``.  This mirrors corepp's natural same-label
-    collision rate and makes the attraction term of AttRepLoss actually fire
-    every step rather than ~30% of the time under uniform random sampling.
-
-    Args:
-        label_to_indices: dict mapping label → list of dataset indices,
-                          as returned by PointCloudLatentDataset.get_label_to_indices().
-        n_labels:         number of distinct tubers per batch.
-        k_scans:          number of scans drawn per tuber per batch.
-        drop_last:        if True, drop the last incomplete batch.
-    """
+    """Batch sampler that guarantees same-label (same-tuber) pairs in every batch."""
 
     def __init__(
         self,
@@ -468,7 +386,6 @@ class TuberBatchSampler(Sampler):
         self.k_scans = k_scans
         self.drop_last = drop_last
 
-        # Only use labels that have at least k_scans scans available
         self.label_to_indices = {
             lbl: idxs for lbl, idxs in label_to_indices.items() if len(idxs) >= k_scans
         }

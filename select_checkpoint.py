@@ -25,59 +25,26 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-import open3d as o3d
 import pandas as pd
 import torch
-import torch_fpsample
-import torch_geometric.transforms as T
 import yaml
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
-from torch_geometric.data import Data
 from torch_geometric.typing import WITH_TORCH_CLUSTER
 from tqdm import tqdm
 
 from data.ply_index import load_ply_files
 from models import PointNetEncoder, SDFDecoder
-from utils import get_volume_coords, sdf2mesh
+from utils import (
+    build_track_pc1_from_ply_files,
+    get_volume_coords,
+    ply_to_encoder_data,
+    sdf2mesh,
+)
 
 warnings.filterwarnings('ignore')
 
 if not WITH_TORCH_CLUSTER:
     raise SystemExit("This code requires 'torch-cluster'")
-
-
-# ---------------------------------------------------------------------------
-# Helpers (identical to test.py)
-# ---------------------------------------------------------------------------
-
-def process_ply(ply_path: str, num_points: int, pre_transform, device,
-                normalize_half_extent: float = 0.05):
-    """Load, centre, normalise, FPS-sample a .ply file and return a batched PyG Data.
-
-    Mirrors PointCloudLatentDataset.__getitem__: centre → isotropic normalise
-    (max abs coord = normalize_half_extent) → FPS.  The scale ratio is stored
-    as data.scale so the encoder can recover metric size information.
-    """
-    pcd = o3d.io.read_point_cloud(ply_path)
-    points = torch.tensor(np.asarray(pcd.points), dtype=torch.float)
-    data = Data(pos=points)
-    data = pre_transform(data)          # centres the cloud
-    points = data.pos
-
-    # Isotropic normalisation — same as _normalize_points in encoder_dataset.py
-    max_half_extent = points.abs().max().item()
-    if max_half_extent > 1e-6:
-        scale = max_half_extent / normalize_half_extent
-        points = points / scale
-    else:
-        scale = 1.0
-
-    if points.size(0) > num_points:
-        points, _ = torch_fpsample.sample(points, num_points)
-    data = Data(pos=points)
-    data.batch = torch.zeros(points.size(0), dtype=torch.int64)
-    data.scale = torch.tensor([scale], dtype=torch.float)
-    return data.to(device)
 
 
 @torch.no_grad()
@@ -89,9 +56,10 @@ def evaluate_checkpoint(
     volume_col: str,
     num_points: int,
     grid_coords: torch.Tensor,
-    pre_transform,
     device,
+    pca_cfg: dict,
     normalize_half_extent: float = 0.05,
+    track_pc1: dict[str, torch.Tensor] | None = None,
     max_hull_points: int | None = None,
 ) -> tuple[float, float, float, int, int]:
     """
@@ -113,7 +81,16 @@ def evaluate_checkpoint(
 
         gt_volume = float(gt_df.loc[unique_id, volume_col])
 
-        data = process_ply(ply_file, num_points, pre_transform, device, normalize_half_extent)
+        pc1_ref = (track_pc1 or {}).get(unique_id)
+        data = ply_to_encoder_data(
+            ply_file,
+            device,
+            pca_cfg=pca_cfg,
+            normalize_half_extent_m=normalize_half_extent,
+            num_points=num_points,
+            pc1_ref=pc1_ref,
+            label=unique_id,
+        )
         latent = encoder(data)                              # (1, latent_size)
 
         latent_tiled = latent.expand(grid_coords.size(0), -1)
@@ -203,9 +180,17 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
         f'bbox=±{grid_bbox}m  stagger_xy={grid_stagger_xy}{center_str}'
     )
 
-    pre_transform = T.Center()
+    pca_cfg = cfg.get('pca', {})
     num_points = cfg.get('num_points', 1024)
     normalize_half_extent = float(cfg.get('normalize_half_extent', 0.05))
+
+    track_pc1: dict[str, torch.Tensor] = {}
+    if pca_cfg.get('enabled', True) and pca_cfg.get('mode', 'track_label') == 'track_label':
+        print(f'PCA: precomputing track_label PC1 for split="{split}"...')
+        track_pc1 = build_track_pc1_from_ply_files(
+            ply_files, min_points=int(pca_cfg.get('min_points', 64))
+        )
+        print(f'PCA track_label: {len(track_pc1)} tubers')
     max_hull_points = cfg.get('max_hull_points', None)
     if max_hull_points is not None:
         max_hull_points = int(max_hull_points)
@@ -242,8 +227,10 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
 
         rmse, mae, r2, n_valid, n_failed = evaluate_checkpoint(
             encoder, decoder, ply_files, gt_df, volume_col,
-            num_points, grid_coords, pre_transform, device,
+            num_points, grid_coords, device,
+            pca_cfg=pca_cfg,
             normalize_half_extent=normalize_half_extent,
+            track_pc1=track_pc1,
             max_hull_points=max_hull_points,
         )
 
