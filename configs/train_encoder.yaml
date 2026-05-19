@@ -42,7 +42,7 @@ seed:              133
 epochs:            100
 batch_size:        16
 num_points:        1024
-normalize_half_extent: 0.03   # center + scale every point cloud to fit in [-0.05, 0.05]^3
+normalize_half_extent: 0.05   # center + scale every point cloud to fit in [-0.05, 0.05]^3
 lr:                0.0001
 weight_decay:      0.000001
 lr_gamma:          0.97      # per-epoch decay for 100 epochs; auto-scaled to actual epoch count
@@ -59,12 +59,12 @@ augmentation_enabled: true
 augmentation:
   jitter_std:          0.0028
   jitter_clip:         0.006
-  rotate_x_deg:        2.0
-  rotate_y_deg:        2.0
+  rotate_x_deg:        10.0
+  rotate_y_deg:        10.0
   rotate_z_deg:        180.0
   max_shear:           0.2
   shear_prob:          0
-  flip_x_prob:         0.55
+  flip_x_prob:         0.50
   scale_min:           1
   scale_max:           1
   point_dropout_prob:  0.5
@@ -118,7 +118,7 @@ delta_rep:          0.5       # margin for repulsion hinge loss
 # ---- Inference / test settings -----------------------------
 grid_resolution: 32          # resolution^3 SDF query points per sample (uniform mode only)
 grid_bbox:       0.10        # half-extent of the bounding box (metres) — matches normalize_half_extent
-grid_stagger_xy: false        # CoRe++ Grid3D: half-cell xy offset on alternating query points
+grid_stagger_xy: true        # CoRe++ Grid3D: half-cell xy offset on alternating query points
 
 # ---- Hierarchical decode (test.py) -----------------------------
 # Optional hierarchical decode (test.py): coarse grid + surface cells + fine
