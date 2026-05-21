@@ -45,7 +45,7 @@ num_points:        1024
 normalize_half_extent: 0.05   # center + scale every point cloud to fit in [-0.05, 0.05]^3
 lr:                0.0001
 weight_decay:      0.000001
-lr_gamma:          0.97      # per-epoch decay for 100 epochs; auto-scaled to actual epoch count
+lr_gamma:          0.98      # per-epoch decay for 100 epochs; auto-scaled to actual epoch count
 sigma_regulariser: 0.01      # weight of the latent L2 regulariser
 snapshot_frequency: 10       # save a checkpoint every N epochs for post-hoc volume-RMSE selection
 
@@ -65,8 +65,8 @@ augmentation:
   max_shear:           0.2
   shear_prob:          0
   flip_x_prob:         0.50
-  scale_min:           1
-  scale_max:           1
+  scale_min:           0.9
+  scale_max:           1.1
   point_dropout_prob:  0.5
   point_dropout_min:   0.10
   point_dropout_max:   0.5
@@ -97,11 +97,6 @@ sampler:
   balance_cultivar: false         # if true, balances by bin x cultivar group
 
 # ---- End-to-end SDF loss (Stage 2) -------------------------
-# Disabled: the SDF samples in sdf_data_dir were generated in the *centered*
-# coordinate frame (PointSDF_2 prepare_dataset.py applies pcd.translate(-centroid)),
-# but the corepp decoder was trained on *uncentered* laser scans.  Feeding
-# centered coordinates to the decoder produces wrong SDF values and corrupted
-# gradients.  Keep sdf_loss_weight at 0.0 when reusing the corepp decoder.
 #
 # sdf_data_dir:           data/3DPotatoTwin/sdfsamples/potato
 sdf_samples_per_shape:  1024   # SDF points sampled per shape per batch step
@@ -133,7 +128,7 @@ hierarchical_decode_chunk: 131072
 
 # Cap interior points passed to convex hull (test.py / select_checkpoint.py).
 # null = use all SDF<=0 grid points; lower values speed up hull at some volume cost.
-max_hull_points: 2048
+max_hull_points: null
 
 # ---- Evaluation (corepp-compatible metrics) ----------------
 # Directory containing one sub-folder per label, each holding the
