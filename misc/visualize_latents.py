@@ -22,7 +22,7 @@ Usage (run from PointSDF_2/):
 
     # Stage 2 encoder latents (single file)
     python misc/visualize_latents.py \\
-        --latents weights/encoder/<run>/latent_dir/test/all_latents.pth \\
+        --latents weights/encoder/<run>/latent_dir/all_latents.pth \\
         --metadata data/3DPotatoTwin/ground_truth.csv \\
         --output misc/results/latents_stage2
 """

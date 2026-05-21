@@ -103,6 +103,15 @@ def _test_results_path(
     return str(Path(results_dir) / f'{filename}.csv')
 
 
+def _encoder_latent_test_dir(
+    checkpoint_path: str,
+    encoder_output_dir: str | None = None,
+) -> str:
+    """Directory for encoder test latents: <output_dir>/<run>/latent_dir/test/"""
+    run_name = _encoder_run_name(checkpoint_path, encoder_output_dir)
+    return str(Path(encoder_output_dir or 'weights/encoder') / run_name / 'latent_dir')
+
+
 def process_ply(ply_path: str, num_points: int, pre_transform, device,
                 normalize_half_extent: float = 0.05):
     """Load, centre, normalise, FPS-sample a .ply file and return a batched PyG Data.
@@ -302,15 +311,11 @@ def main(cfg: dict, checkpoint_path: str):
     cd_metric = ChamferDistance()
     pr_metric = PrecisionRecall(0.001, 0.01, 10)
 
-    latent_dir = cfg.get('latent_dir')
-    if not latent_dir:
-        raise ValueError(
-            "test.py requires 'latent_dir' in the encoder config (same base as train/val "
-            "Codes). Latents are written to <latent_dir>/test/<ply_stem>.pth"
-        )
-    latent_test_dir = os.path.join(latent_dir, 'test')
+    encoder_output_dir = cfg.get('output_dir', 'weights/encoder')
+    latent_test_dir = _encoder_latent_test_dir(checkpoint_path, encoder_output_dir)
     os.makedirs(latent_test_dir, exist_ok=True)
-    print(f'Encoder latents will be saved under {latent_test_dir}')
+    batch_latent_path = os.path.join(latent_test_dir, 'all_latents.pth')
+    print(f'Encoder latents will be saved to {batch_latent_path}')
 
     # One GT PLY per tuber — avoid repeated glob + disk read each test sample
     gt_pcd_cache: dict[str, o3d.geometry.PointCloud | None] = {}
@@ -469,7 +474,6 @@ def main(cfg: dict, checkpoint_path: str):
                 'exec_time_ms': round(elapsed_ms, 2),
             })
 
-    batch_latent_path = os.path.join(latent_test_dir, 'all_latents.pth')
     torch.save(latent_buffer, batch_latent_path)
     print(f'Encoder latents saved to {batch_latent_path}')
 
