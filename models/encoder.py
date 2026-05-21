@@ -61,12 +61,14 @@ class PointNetEncoder(torch.nn.Module):
             nn.Linear(1025, 512),   # 1024 global features + 1 scale scalar
             nn.BatchNorm1d(512),
             nn.LeakyReLU(0.2),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.4),
+            nn.Linear(256, 128),
             nn.LeakyReLU(0.2),
             nn.Dropout(0.3),
-            nn.Linear(256, latent_size),
+            nn.Linear(128, latent_size),
         )
 
     def forward(self, data):

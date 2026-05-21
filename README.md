@@ -6,25 +6,31 @@ Forked from [PointRAFT](https://arxiv.org/abs/2512.24193); Stage 1 / reconstruct
 
 ```
 Partial point cloud (.ply, from conveyor belt)
+ │  centre + isotropic normalise (normalize_half_extent in config)
+ ▼
+PointNet++ backbone (`models/encoder.py`)
+ │  SA1 / SA2 / GlobalSA  →  pooled geometry feature (1024-D)
+ │  + scale (1)           — max_half_extent / normalize_half_extent (raw ratio)
+ ▼
+Latent head  Linear(1025 → 512 → 256 → 32)  →  latent code  z ∈ ℝ³²
  │
  ▼
-PointNet++ encoder (`models/encoder.py`)  →  latent code  z ∈ ℝ³²
- │
- ▼
-DeepSDF decoder (`models/decoder.py`)     →  SDF at query xyz
+DeepSDF decoder (`models/decoder.py`), frozen  →  SDF at query xyz
 (8-layer MLP, width 512, skip at layer 4)
  │
  ▼
 Convex hull of grid points where SDF < 0  →  volume (mL)
 ```
 
+The per-cloud **scale ratio** is computed from the centred partial cloud (`data/encoder_dataset.py`) and concatenated to the pooled feature before the latent MLP. It is **not** predicted by PointNet++. **`log(scale)` and `pca_eigvals` were ablated; raw scale ratio gave the best results.**
+
 **Training pipeline**
 
-1. **Stage 1** — autodecoder on complete-scan SDF samples: joint decoder + per-shape latents.
+1. **Stage 1** — autodecoder on complete-scan SDF samples: joint decoder + per-shape latents (frozen in this thesis — see `../AGENTS.md`).
 2. **Reconstruct** — per-shape latent optimisation with frozen decoder; val Chamfer sweep picks checkpoint `E*`.
 3. **Stage 2** — train encoder on partial PLYs to match reconstructed latents; decoder frozen.
-4. **Select** — pick encoder snapshot by **val volume RMSE** (not latent MSE).
-5. **Test** — full pipeline on test split; report volume and optional shape metrics.
+4. **Select** — **always** run `select_checkpoint.py` after training; pick snapshot by **val volume RMSE** → `best_vol_<R>/checkpoint.pth`.
+5. **Test** — `test.py` on the selected checkpoint; report volume and optional shape metrics.
 
 > **Evaluation protocol:** 2025 data is a strict blind test set. Use train/val only for checkpoint and hyperparameter selection; do not tune on test metrics.
 
@@ -218,12 +224,15 @@ python train.py --config configs/train_encoder.yaml
 
 ```
 weights/encoder/<run>/
-├── encoder.pth          # best val latent loss
-├── checkpoint.pth       # latest full checkpoint
-├── snapshots/00NN/checkpoint.pth
+├── encoder.pth            # best val latent MSE during train.py — not used for final eval
+├── checkpoint.pth         # latest full checkpoint (val latent MSE)
+├── snapshots/00NN/checkpoint.pth   # inputs to select_checkpoint.py
+├── best_vol_32/checkpoint.pth      # created by Step 4b — use this for test.py
 ├── config.yaml
 └── events.out.tfevents.*
 ```
+
+Requires `snapshot_frequency > 0` so Step 4b can sweep epoch snapshots.
 
 ```bash
 tensorboard --logdir weights/encoder/<run>
@@ -233,7 +242,9 @@ Default encoder: `PointNetEncoder` in `models/encoder.py`. `encoder_v2.py` / `en
 
 ---
 
-### Step 4b — Best encoder checkpoint (val volume RMSE)
+### Step 4b — Best encoder checkpoint (val volume RMSE) — required
+
+**Run after every Stage 2 training.** This selects the model used for `test.py` and reported metrics (not `encoder.pth` from Step 4).
 
 ```bash
 python select_checkpoint.py \
@@ -241,7 +252,7 @@ python select_checkpoint.py \
     --run_dir weights/encoder/<run>
 ```
 
-Requires `snapshot_frequency > 0` during training. Copies the val-RMSE-best snapshot to:
+Copies the val-volume-RMSE-best snapshot to:
 
 ```
 weights/encoder/<run>/best_vol_<grid_resolution>/checkpoint.pth
@@ -310,7 +321,7 @@ python reconstruct.py -c configs/train_deepsdf.yaml \
 # 4. Stage 2
 python train.py --config configs/train_encoder.yaml
 
-# 4b. Val volume selection
+# 4b. Val volume selection (required after every train run)
 python select_checkpoint.py -c configs/train_encoder.yaml -r weights/encoder/<run>
 
 # 5. Test
@@ -363,7 +374,7 @@ PointSDF_2/
 
 ## Config reference
 
-Values below match the **shipped YAML defaults**; override per experiment.
+Tables list **keys and roles**. Numeric defaults change during tuning — **always follow `configs/*.yaml`** on the server.
 
 ### `configs/train_deepsdf.yaml` (Stage 1)
 
@@ -402,7 +413,7 @@ Values below match the **shipped YAML defaults**; override per experiment.
 | `epochs` | `100` | Encoder training epochs |
 | `batch_size` | `16` | Batch size (unless tuber sampler) |
 | `num_points` | `1024` | FPS points per partial cloud |
-| `normalize_half_extent` | `0.075` | Isotropic scale target (m) |
+| `normalize_half_extent` | *(yaml)* | Isotropic scale target (m); scale ratio = max half-extent / this value |
 | `lr` / `lr_gamma` | `1e-4` / `0.97` | Adam + exponential decay (scaled to epoch count) |
 | `weight_decay` | `1e-6` | Adam weight decay |
 | `sigma_regulariser` | `0.01` | L2 on predicted latents |
@@ -414,7 +425,7 @@ Values below match the **shipped YAML defaults**; override per experiment.
 | `sampler.enabled` | `false` | Volume-bin weighted sampling |
 | `snapshot_frequency` | `10` | Epoch snapshots for `select_checkpoint.py` |
 | `grid_resolution` | `32` | Uniform grid side length (`32³` queries) |
-| `grid_bbox` | `0.15` | Half-extent of SDF bbox (m) |
+| `grid_bbox` | *(yaml)* | Half-extent of SDF bbox (m); typically matches `normalize_half_extent` |
 | `hierarchical_decode` | `false` | Coarse-to-fine decode in test/select |
 | `max_hull_points` | `2048` | Cap interior points for convex hull |
 | `results_dir` | `results` | `test.py` CSV output directory |
@@ -429,10 +440,11 @@ Values below match the **shipped YAML defaults**; override per experiment.
 | Two-stage training | Decoder learns a shape space from complete SDFs; encoder maps partial scans into that space without disturbing Stage 1. |
 | Reconstruct latents for Stage 2 | Test-time optimisation with frozen decoder yields decoder-consistent targets vs raw autodecoder embeddings. |
 | `E*` by val Chamfer | Reconstruction quality on held-out complete shapes peaks before overfitting train latents. |
-| Encoder snapshot by val volume RMSE | Latent MSE does not always minimise hull volume error. |
+| Encoder checkpoint for eval | **Always** `select_checkpoint.py` after training → lowest **val volume RMSE** → `best_vol_<R>/`. `encoder.pth` is val latent MSE only. |
 | Convex hull volume | Potatoes are roughly convex; hull is fast, watertight, and matches CoRe++. |
 | Latent size 32, decoder width 512 | CoRe++ / DeepSDF defaults for this domain. |
-| Point clouds only (no RGB-D CNN) | Geometry-only input; no camera-specific encoder. |
+| Point clouds only (no RGB-D CNN) | Geometry-only input; no camera-specific encoder (PointRAFT height embedding removed). |
+| Raw **scale ratio** in latent head | Recovers metric size after normalisation; **`log(scale)` tried, raw scale worked best**; `pca_eigvals` ablated. |
 | Optional contrastive loss | AttRepLoss structures the latent space when enabled; off in the default config. |
 | `sdf_loss_weight: 0` default | Centered partial clouds vs uncentered Stage 1 decoder coords — enable only with aligned SDF samples. |
 
