@@ -1,4 +1,4 @@
-Epoch 0010 | RMSE=80.83 mL  MAE=59.26 mL  R²=-0.065  valid=1439/1439
+Epoch 0010 | RMSE=80.83 mL  MAE=59.26 mL  R²=0.065  valid=1439/1439
 Epoch 0020 | RMSE=44.90 mL  MAE=31.53 mL  R²=0.671  valid=1439/1439
 Epoch 0030 | RMSE=63.78 mL  MAE=57.15 mL  R²=0.337  valid=1439/1439
 Epoch 0040 | RMSE=34.93 mL  MAE=25.92 mL  R²=0.801  valid=1439/1439
