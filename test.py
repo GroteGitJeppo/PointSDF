@@ -29,7 +29,7 @@ Usage:
     python test.py -c configs/train_encoder.yaml
 
 Results CSV:
-    <results_dir>/test_results_<encoder_run>_<grid_resolution>.csv
+    <results_dir>/<encoder_weight_dir>_<grid_resolution>_t<timestamp>.csv
     (default results_dir: results)
 """
 
@@ -38,6 +38,7 @@ import glob
 import os
 import timeit
 import warnings
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -75,40 +76,42 @@ def _sync_cuda(device: torch.device) -> None:
 
 
 def _encoder_run_name(checkpoint_path: str, encoder_output_dir: str | None = None) -> str:
-    """Folder path under weights/encoder for this checkpoint, joined with underscores."""
+    """Top-level run folder under weights/encoder (e.g. SLURM job id).
+
+    Examples (output_dir=weights/encoder):
+      .../5471226/checkpoint.pth                    → 5471226
+      .../5471226/best_vol_32/checkpoint.pth        → 5471226
+      .../5471226/snapshots/0090/checkpoint.pth     → 5471226
+    """
     ckpt = Path(checkpoint_path).resolve()
     if encoder_output_dir:
         try:
             rel = ckpt.parent.relative_to(Path(encoder_output_dir).resolve())
             if rel.parts:
-                return '_'.join(rel.parts)
+                return rel.parts[0]
         except ValueError:
             pass
-    parent = ckpt.parent
-    if parent.name == 'snapshots':
-        return parent.parent.name
-    if parent.parent.name == 'snapshots':
-        return f'{parent.parent.parent.name}_snapshots_{parent.name}'
-    return parent.name
+    run_dir = ckpt.parent
+    while run_dir.name == 'snapshots' or run_dir.name.startswith('best_vol'):
+        run_dir = run_dir.parent
+    return run_dir.name
+
+
+def _corepp_run_name(enc_cfg: dict) -> str:
+    return Path(enc_cfg.get('corepp_weights', 'corepp')).stem
 
 
 def _test_results_path(
     *,
     results_dir: str,
     effective_resolution: int,
-    checkpoint_path: str | None = None,
-    encoder_output_dir: str | None = None,
-    encoder_type: str = 'pointnet',
-    enc_cfg: dict | None = None,
+    run_name: str,
+    timestamp: str | None = None,
 ) -> str:
-    """Build results CSV path: test_results_<run>_<R>.csv"""
-    if encoder_type == 'corepp_rgbd' and enc_cfg:
-        run_name = Path(enc_cfg.get('corepp_weights', 'corepp')).stem
-    elif checkpoint_path:
-        run_name = _encoder_run_name(checkpoint_path, encoder_output_dir)
-    else:
-        run_name = 'test'
-    return str(Path(results_dir) / f'test_results_{run_name}_{effective_resolution}.csv')
+    """Build results CSV path: <encoder_weight_dir>_<grid_resolution>_t<timestamp>.csv"""
+    ts = timestamp or datetime.now().strftime('%d_%m_%H%M%S')
+    filename = f'{run_name}_{effective_resolution}_t{ts}'
+    return str(Path(results_dir) / f'{filename}.csv')
 
 
 def process_ply(ply_path: str, num_points: int, pre_transform, device,
@@ -882,13 +885,16 @@ def main(
             )
 
     os.makedirs(results_dir, exist_ok=True)
+    if encoder_type == 'corepp_rgbd' and enc_cfg:
+        run_name = _corepp_run_name(enc_cfg)
+    elif checkpoint_path:
+        run_name = _encoder_run_name(checkpoint_path, encoder_output_dir)
+    else:
+        run_name = 'test'
     results_path = _test_results_path(
         results_dir=results_dir,
         effective_resolution=effective_resolution,
-        checkpoint_path=checkpoint_path,
-        encoder_output_dir=encoder_output_dir,
-        encoder_type=encoder_type,
-        enc_cfg=enc_cfg,
+        run_name=run_name,
     )
     df_out.to_csv(results_path, index=False)
     print(f'\nResults saved to: {results_path}')

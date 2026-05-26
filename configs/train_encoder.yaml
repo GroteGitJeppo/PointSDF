@@ -57,7 +57,7 @@ encoder:
 
 # ---- Output ------------------------------------------------
 output_dir: weights/encoder
-# test.py writes: <results_dir>/test_results_<encoder_run>_<grid_resolution>.csv
+# test.py writes: <results_dir>/<encoder_weight_dir>_<grid_resolution>_t<timestamp>.csv
 results_dir: results
 
 # ---- Encoder training --------------------------------------
