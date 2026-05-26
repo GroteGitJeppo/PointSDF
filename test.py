@@ -57,6 +57,7 @@ from data.rgbd_corepp_dataset import RgbdCoreppDataset, RgbdSampleError
 from models import PointNetEncoder, SDFDecoder
 from models.corepp_encoder import build_corepp_encoder, load_corepp_encoder_state
 from utils import decode_sdf_hierarchical, get_volume_coords, sdf2mesh
+from utils.grid_bbox import resolve_grid_bbox
 from utils.test_trace import TestTraceLogger, print_repo_state
 from metrics_3d.chamfer_distance import ChamferDistance
 from metrics_3d.precision_recall import PrecisionRecall
@@ -465,7 +466,7 @@ def main(
     num_points = cfg.get('num_points', 1024)
     normalize_half_extent = float(cfg.get('normalize_half_extent', 0.05))
     grid_resolution = cfg.get('grid_resolution', 64)
-    grid_bbox = cfg.get('grid_bbox', 0.15)
+    grid_bbox = resolve_grid_bbox(cfg, test_ids)
     grid_stagger_xy = bool(cfg.get('grid_stagger_xy', False))
 
     hierarchical_decode = bool(cfg.get('hierarchical_decode', False))

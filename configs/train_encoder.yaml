@@ -139,9 +139,10 @@ lambda_attraction:  0.05      # weight applied to AttRepLoss (matches corepp sup
 delta_rep:          0.5       # margin for repulsion hinge loss
 
 # ---- Inference / test settings -----------------------------
-grid_resolution: 40          # resolution^3 SDF query points per sample (uniform mode only)
-grid_bbox:       0.1        # half-extent of the bounding box (metres) — matches normalize_half_extent
-grid_stagger_xy: false        # CoRe++ Grid3D: half-cell xy offset on alternating query points
+grid_resolution: 20          # matches corepp super3d_32.json (grid_density)
+# auto: half-extent from max complete-scan extent over the eval split (corepp find_global_bbox)
+grid_bbox:       auto
+grid_stagger_xy: true         # CoRe++ Grid3D generate_point_from_bbox stagger
 
 # ---- Hierarchical decode (test.py) -----------------------------
 # Optional hierarchical decode (test.py): coarse grid + surface cells + fine
@@ -157,7 +158,7 @@ hierarchical_decode_chunk: 131072
 # test_trace_log: results/test_trace.tsv   # optional; or use: python test.py --trace
 # Cap interior points passed to convex hull (test.py / select_checkpoint.py).
 # null = use all SDF<=0 grid points; lower values speed up hull at some volume cost.
-max_hull_points: 2048
+max_hull_points: null
 
 # ---- Evaluation (corepp-compatible metrics) ----------------
 # Directory containing one sub-folder per label, each holding the
