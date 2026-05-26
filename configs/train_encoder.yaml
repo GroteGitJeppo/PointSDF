@@ -44,18 +44,13 @@ batch_size:        16
 num_points:        1024
 normalize_half_extent: 0.05   # center + scale every point cloud to fit in [-0.05, 0.05]^3
 lr:                0.0001
-weight_decay:      0.0001
+weight_decay:      0.001
 lr_gamma:          0.98      # per-epoch decay for 100 epochs; auto-scaled to actual epoch count
 sigma_regulariser: 0.01      # weight of the latent L2 regulariser
 snapshot_frequency: 10       # save a checkpoint every N epochs for post-hoc volume-RMSE selection
 
 # ---- Augmentation (train split only) ------------------------
-# Set augmentation_enabled: false to train without any augmentation (useful for
-# debugging or ablation studies). When false, the augmentation block below is
-# ignored entirely and point clouds are loaded as-is (centered + FPS only).
 augmentation_enabled: true
-# Aggressive but bounded: strong viewpoint + distance stress without unbounded noise.
-# If val loss diverges, reduce jitter_std / scale span / dropout_max first.
 augmentation:
   jitter_std:          0.0028
   jitter_clip:         0.006
@@ -75,12 +70,6 @@ augmentation:
   occlusion_ratio_max: 0.28
 
 # ---- Tuber batch sampler (train split only) -----------------
-# Guarantees same-tuber pairs in every batch so the contrastive attraction
-# term actually fires every step (mirrors corepp's natural same-label rate).
-# Each batch contains k_scans scans from each of n_labels randomly chosen
-# tubers → effective batch_size = n_labels * k_scans.
-# Mutually exclusive with the weighted sampler below (tuber_sampler wins).
-# Recommended when contrastive_loss: true.
 tuber_sampler:
   enabled: false
   k_scans: 2      # scans per tuber per batch
@@ -89,7 +78,6 @@ tuber_sampler:
 # ---- Sampler (train split only) -----------------------------
 # Fixed-width 50 ml bins mirroring the PointRAFT weight-class scheme.
 # Each class spans 50 ml; the last bin is open-ended (450+ ml).
-# Omit bin_edges to use this default; override with a custom list if needed.
 sampler:
   enabled: false
   trait_column: "volume (cm3)"   # from target_csv
@@ -101,25 +89,22 @@ sampler:
 # sdf_data_dir:           data/3DPotatoTwin/sdfsamples/potato
 sdf_samples_per_shape:  1024   # SDF points sampled per shape per batch step
 sdf_clamp_value:        0.1    # match Stage 1 clamp_value
-sdf_loss_weight:        0.0    # disabled — see note above
+sdf_loss_weight:        0.0    # disabled
 
-# ---- Contrastive loss (AttRepLoss, matching corepp) --------
+# ---- Contrastive loss  --------
 # Attracts latents of the same tuber, repels latents of different tubers.
 # Requires each batch item to carry its label (potato tuber ID).
 contrastive_loss:   false
-lambda_attraction:  0.05      # weight applied to AttRepLoss (matches corepp super3d_32.json)
+lambda_attraction:  0.05      # weight applied to AttRepLoss
 delta_rep:          0.5       # margin for repulsion hinge loss
 
 # ---- Inference / test settings -----------------------------
 grid_resolution: 20          # resolution^3 SDF query points per sample (uniform mode only)
-grid_bbox:       auto        # per-split global half-extent from gt_pcd_dir (CoRe++ find_global_bbox)
+grid_bbox:       auto        # per-split global half-extent from gt_pcd_dir
 grid_bbox_margin: 0.10       # when grid_bbox is auto: scale cube side by (1 + margin)
-grid_stagger_xy: true        # CoRe++ Grid3D: half-cell xy offset on alternating query points
+grid_stagger_xy: true        # half-cell xy offset on alternating query points
 
 # ---- Hierarchical decode (test.py) -----------------------------
-# Optional hierarchical decode (test.py): coarse grid + surface cells + fine
-# samples inside dilated cells. When hierarchical_decode is true, grid_resolution
-# is not used; effective fine lattice is R_fine = (coarse_resolution-1)*fine_subdiv+1.
 hierarchical_decode: false
 coarse_resolution: 16
 fine_subdiv: 4
@@ -131,7 +116,7 @@ hierarchical_decode_chunk: 131072
 # null = use all SDF<=0 grid points; lower values speed up hull at some volume cost.
 max_hull_points: null
 
-# ---- Evaluation (corepp-compatible metrics) ----------------
+# ---- Evaluation ----------------
 # Directory containing one sub-folder per label, each holding the
 # complete laser/SfM PLY used as GT for Chamfer and precision/recall.
 # Same source as: python data/prepare_dataset.py sdf --src <gt_pcd_dir>
