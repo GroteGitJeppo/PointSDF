@@ -7,6 +7,7 @@ import os
 
 import numpy as np
 import open3d as o3d
+import pandas as pd
 
 
 def find_global_grid_half_extent(
@@ -78,3 +79,44 @@ def resolve_grid_bbox(cfg: dict, label_ids: set[str] | list[str]) -> float:
         )
         return half
     return float(raw)
+
+
+def split_labels_from_csv(splits_csv: str, *split_names: str) -> set[str]:
+    """Return unique tuber labels for the given splits (e.g. train, val, test)."""
+    df = pd.read_csv(splits_csv)
+    names = split_names if split_names else ("train", "val", "test")
+    return set(df.loc[df["split"].isin(names), "label"].astype(str))
+
+
+def resolve_inference_grid_bbox(
+    cfg: dict,
+    *,
+    eval_split: str | None = None,
+    label_ids: set[str] | list[str] | None = None,
+) -> float:
+    """
+    Resolve SDF grid half-extent for volume decode (train / select / test).
+
+    When ``grid_bbox`` is ``auto``, extent is computed from ``gt_pcd_dir`` over
+    the labels for that run only — matching CoRe++ ``find_global_bbox`` on
+    ``split_ids`` for the dataloader split (not train+val+test combined).
+
+    Pass ``label_ids`` to use an explicit set (e.g. test labels after a
+    ``--year`` filter). Otherwise pass ``eval_split`` (``train``, ``val``, ``test``).
+    """
+    if label_ids is None:
+        if not eval_split:
+            raise ValueError(
+                "resolve_inference_grid_bbox: pass eval_split or label_ids"
+            )
+        label_ids = split_labels_from_csv(cfg["splits_csv"], eval_split)
+        print(
+            f"Inference grid bbox: split={eval_split!r} "
+            f"({len(label_ids)} labels, CoRe++ per-split)"
+        )
+    else:
+        print(
+            f"Inference grid bbox: {len(label_ids)} labels "
+            f"(explicit set, CoRe++ per-split)"
+        )
+    return resolve_grid_bbox(cfg, label_ids)
