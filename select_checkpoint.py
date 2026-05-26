@@ -39,6 +39,7 @@ from tqdm import tqdm
 from data.ply_index import load_ply_files
 from models import PointNetEncoder, SDFDecoder
 from utils import get_volume_coords, sdf2mesh
+from utils.grid_bbox import resolve_inference_grid_bbox
 
 warnings.filterwarnings('ignore')
 
@@ -186,7 +187,7 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
 
     # ----- Grid coords (built once) -----
     grid_resolution = cfg.get('grid_resolution', 60)
-    grid_bbox = cfg.get('grid_bbox', 0.15)
+    grid_bbox = resolve_inference_grid_bbox(cfg, eval_split=split)
     grid_stagger_xy = bool(cfg.get('grid_stagger_xy', False))
     # grid_center shifts the query grid from the origin to the position where the
     # complete laser scans live in the scanner coordinate frame.  Required when

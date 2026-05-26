@@ -40,6 +40,7 @@ from torch_geometric.typing import WITH_TORCH_CLUSTER
 
 from data.encoder_dataset import PointCloudLatentDataset, TuberBatchSampler
 from models import PointNetEncoder, SDFDecoder
+from utils.grid_bbox import resolve_inference_grid_bbox
 
 warnings.filterwarnings('ignore')
 
@@ -309,9 +310,14 @@ def main(cfg: dict):
     os.makedirs(output_dir, exist_ok=True)
     print(f'Run directory: {output_dir}')
 
+    # Resolve inference grid extent (used by select_checkpoint.py / test.py).
+    grid_bbox_resolved = resolve_inference_grid_bbox(cfg, eval_split='train')
+    cfg['grid_bbox_resolved'] = float(grid_bbox_resolved)
+
     with open(os.path.join(output_dir, 'config.yaml'), 'w') as f:
         yaml.dump(cfg, f)
     writer = SummaryWriter(log_dir=output_dir)
+    writer.add_text('inference/grid_bbox_m', str(grid_bbox_resolved))
     print("Evaluation protocol: 2025 is strict blind test-only. "
           "Checkpoint selection uses train/val only.")
 
