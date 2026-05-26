@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, Sampler
 from torch_geometric.data import Data
 from tqdm import tqdm
 
+from data.ply_index import load_ply_files
 from data.sdf_samples import resolve_samples_npz
 
 
@@ -59,6 +60,7 @@ class PointCloudLatentDataset(Dataset):
         sdf_samples_per_shape: int = 1024,
         sdf_clamp_value: float | None = None,
         normalize_half_extent: float = 0.05,
+        ply_index_csv: str | None = None,
     ):
         self.latent_dir = latent_dir
         self.split = split
@@ -74,14 +76,12 @@ class PointCloudLatentDataset(Dataset):
 
         # Build candidate sample list — (ply_path, label, latent_path)
         candidates: list[tuple[str, str, str]] = []
-        for ply_file in Path(data_root).rglob('*.ply'):
-            label = ply_file.parent.name
-            if label not in labels:
-                continue
+        for ply_path in load_ply_files(data_root, labels, ply_index_csv):
+            label = Path(ply_path).parent.name
             latent_path = os.path.join(latent_dir, f'{label}.pth')
             if not os.path.exists(latent_path):
                 continue
-            candidates.append((str(ply_file), label, latent_path))
+            candidates.append((ply_path, label, latent_path))
 
         if not candidates:
             raise RuntimeError(

@@ -6,7 +6,7 @@ Build once on the server:
                              --output    data/3DPotatoTwin/ply_index.csv
 
 Then set  ply_index_csv: data/3DPotatoTwin/ply_index.csv  in your encoder config.
-test.py and select_checkpoint.py will use the CSV for O(1) lookup instead of
+train.py, test.py, and select_checkpoint.py use the CSV instead of
 crawling the filesystem.  Falls back to rglob if the key is absent or the file
 does not exist, so the change is fully backward-compatible.
 """

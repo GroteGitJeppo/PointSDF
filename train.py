@@ -352,6 +352,8 @@ def main(cfg: dict):
 
     normalize_half_extent = float(cfg.get('normalize_half_extent', 0.05))
 
+    ply_index_csv = cfg.get('ply_index_csv')
+
     train_ds = PointCloudLatentDataset(
         data_root=cfg['data_root'],
         splits_csv=cfg['splits_csv'],
@@ -364,6 +366,7 @@ def main(cfg: dict):
         sdf_samples_per_shape=sdf_samples,
         sdf_clamp_value=sdf_clamp,
         normalize_half_extent=normalize_half_extent,
+        ply_index_csv=ply_index_csv,
     )
     val_ds = PointCloudLatentDataset(
         data_root=cfg['data_root'],
@@ -376,6 +379,7 @@ def main(cfg: dict):
         sdf_samples_per_shape=sdf_samples,
         sdf_clamp_value=sdf_clamp,
         normalize_half_extent=normalize_half_extent,
+        ply_index_csv=ply_index_csv,
     )
 
     # ----- Sampler selection (mutually exclusive) -----
