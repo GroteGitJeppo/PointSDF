@@ -1,0 +1,110 @@
+Epoch 001/100 | train 0.18399 (mse=0.18335) | val 0.08503 (mse=0.08489) | 20.3s
+  Saved best model (val 0.08503)
+Epoch 002/100 | train 0.13124 (mse=0.13071) | val 0.08370 (mse=0.08358) | 16.5s
+  Saved best model (val 0.08370)
+Epoch 003/100 | train 0.11025 (mse=0.10979) | val 0.06655 (mse=0.06635) | 16.7s
+  Saved best model (val 0.06655)
+Epoch 004/100 | train 0.09414 (mse=0.09372) | val 0.06604 (mse=0.06583) | 16.8s
+  Saved best model (val 0.06604)
+Epoch 005/100 | train 0.08491 (mse=0.08452) | val 0.06475 (mse=0.06455) | 16.6s
+  Saved best model (val 0.06475)
+Epoch 006/100 | train 0.07862 (mse=0.07825) | val 0.06452 (mse=0.06431) | 17.1s
+  Saved best model (val 0.06452)
+Epoch 007/100 | train 0.07457 (mse=0.07422) | val 0.06290 (mse=0.06265) | 16.9s
+  Saved best model (val 0.06290)
+Epoch 008/100 | train 0.07159 (mse=0.07123) | val 0.06394 (mse=0.06373) | 16.4s
+Epoch 009/100 | train 0.06877 (mse=0.06842) | val 0.06386 (mse=0.06363) | 16.5s
+Epoch 010/100 | train 0.06669 (mse=0.06634) | val 0.06255 (mse=0.06233) | 16.9s
+  Saved best model (val 0.06255)
+Epoch 011/100 | train 0.06476 (mse=0.06441) | val 0.06580 (mse=0.06558) | 16.6s
+Epoch 012/100 | train 0.06323 (mse=0.06288) | val 0.06102 (mse=0.06075) | 16.1s
+  Saved best model (val 0.06102)
+Epoch 013/100 | train 0.06190 (mse=0.06155) | val 0.06105 (mse=0.06074) | 16.7s
+Epoch 014/100 | train 0.06069 (mse=0.06035) | val 0.06200 (mse=0.06168) | 16.7s
+Epoch 015/100 | train 0.05911 (mse=0.05877) | val 0.05912 (mse=0.05886) | 16.6s
+  Saved best model (val 0.05912)
+Epoch 016/100 | train 0.05830 (mse=0.05796) | val 0.05990 (mse=0.05957) | 16.7s
+Epoch 017/100 | train 0.05771 (mse=0.05737) | val 0.06372 (mse=0.06339) | 16.5s
+Epoch 018/100 | train 0.05755 (mse=0.05721) | val 0.06946 (mse=0.06913) | 16.4s
+Epoch 019/100 | train 0.05697 (mse=0.05663) | val 0.07021 (mse=0.06987) | 16.3s
+Epoch 020/100 | train 0.05641 (mse=0.05607) | val 0.06412 (mse=0.06375) | 16.6s
+Epoch 021/100 | train 0.05612 (mse=0.05578) | val 0.06561 (mse=0.06524) | 16.7s
+Epoch 022/100 | train 0.05596 (mse=0.05562) | val 0.06959 (mse=0.06921) | 16.6s
+Epoch 023/100 | train 0.05560 (mse=0.05526) | val 0.07242 (mse=0.07200) | 16.3s
+Epoch 024/100 | train 0.05541 (mse=0.05507) | val 0.06616 (mse=0.06577) | 16.4s
+Epoch 025/100 | train 0.05509 (mse=0.05475) | val 0.06557 (mse=0.06518) | 17.2s
+Epoch 026/100 | train 0.05503 (mse=0.05469) | val 0.07251 (mse=0.07213) | 16.4s
+Epoch 027/100 | train 0.05489 (mse=0.05454) | val 0.07263 (mse=0.07226) | 16.5s
+Epoch 028/100 | train 0.05466 (mse=0.05432) | val 0.06910 (mse=0.06875) | 16.6s
+Epoch 029/100 | train 0.05446 (mse=0.05411) | val 0.06916 (mse=0.06878) | 16.7s
+Epoch 030/100 | train 0.05436 (mse=0.05402) | val 0.07404 (mse=0.07367) | 16.4s
+Epoch 031/100 | train 0.05429 (mse=0.05394) | val 0.07939 (mse=0.07897) | 16.5s
+Epoch 032/100 | train 0.05418 (mse=0.05383) | val 0.06610 (mse=0.06574) | 16.1s
+Epoch 033/100 | train 0.05410 (mse=0.05376) | val 0.07175 (mse=0.07136) | 16.5s
+Epoch 034/100 | train 0.05387 (mse=0.05353) | val 0.07115 (mse=0.07078) | 16.8s
+Epoch 035/100 | train 0.05391 (mse=0.05356) | val 0.07441 (mse=0.07402) | 16.5s
+Epoch 036/100 | train 0.05383 (mse=0.05349) | val 0.06867 (mse=0.06827) | 16.6s
+Epoch 037/100 | train 0.05381 (mse=0.05347) | val 0.06567 (mse=0.06534) | 17.2s
+Epoch 038/100 | train 0.05363 (mse=0.05328) | val 0.07089 (mse=0.07052) | 17.1s
+Epoch 039/100 | train 0.05376 (mse=0.05342) | val 0.06448 (mse=0.06410) | 16.9s
+Epoch 040/100 | train 0.05347 (mse=0.05313) | val 0.06675 (mse=0.06639) | 16.0s
+Epoch 041/100 | train 0.05349 (mse=0.05315) | val 0.06861 (mse=0.06829) | 16.5s
+Epoch 042/100 | train 0.05344 (mse=0.05309) | val 0.07361 (mse=0.07323) | 16.6s
+Epoch 043/100 | train 0.05349 (mse=0.05314) | val 0.07143 (mse=0.07110) | 16.5s
+Epoch 044/100 | train 0.05336 (mse=0.05301) | val 0.06946 (mse=0.06911) | 16.7s
+Epoch 045/100 | train 0.05329 (mse=0.05295) | val 0.06664 (mse=0.06626) | 16.6s
+Epoch 046/100 | train 0.05318 (mse=0.05283) | val 0.06844 (mse=0.06806) | 16.7s
+Epoch 047/100 | train 0.05311 (mse=0.05277) | val 0.07143 (mse=0.07107) | 15.9s
+Epoch 048/100 | train 0.05306 (mse=0.05271) | val 0.07091 (mse=0.07056) | 16.3s
+Epoch 049/100 | train 0.05304 (mse=0.05269) | val 0.06868 (mse=0.06831) | 16.6s
+Epoch 050/100 | train 0.05311 (mse=0.05277) | val 0.06846 (mse=0.06809) | 16.9s
+Epoch 051/100 | train 0.05304 (mse=0.05270) | val 0.06574 (mse=0.06540) | 17.1s
+Epoch 052/100 | train 0.05303 (mse=0.05269) | val 0.06327 (mse=0.06294) | 16.7s
+Epoch 053/100 | train 0.05294 (mse=0.05259) | val 0.06467 (mse=0.06432) | 16.5s
+Epoch 054/100 | train 0.05279 (mse=0.05244) | val 0.06890 (mse=0.06859) | 16.2s
+Epoch 055/100 | train 0.05288 (mse=0.05253) | val 0.06448 (mse=0.06415) | 15.7s
+Epoch 056/100 | train 0.05291 (mse=0.05256) | val 0.06435 (mse=0.06401) | 16.4s
+Epoch 057/100 | train 0.05280 (mse=0.05246) | val 0.06556 (mse=0.06524) | 16.2s
+Epoch 058/100 | train 0.05270 (mse=0.05236) | val 0.06510 (mse=0.06476) | 16.1s
+Epoch 059/100 | train 0.05271 (mse=0.05237) | val 0.06642 (mse=0.06611) | 16.3s
+Epoch 060/100 | train 0.05269 (mse=0.05234) | val 0.06572 (mse=0.06538) | 16.0s
+Epoch 061/100 | train 0.05273 (mse=0.05238) | val 0.06480 (mse=0.06447) | 16.2s
+Epoch 062/100 | train 0.05269 (mse=0.05234) | val 0.06534 (mse=0.06500) | 16.4s
+Epoch 063/100 | train 0.05263 (mse=0.05228) | val 0.06450 (mse=0.06416) | 16.3s
+Epoch 064/100 | train 0.05270 (mse=0.05236) | val 0.06454 (mse=0.06422) | 16.4s
+Epoch 065/100 | train 0.05257 (mse=0.05222) | val 0.06492 (mse=0.06460) | 16.4s
+Epoch 066/100 | train 0.05270 (mse=0.05235) | val 0.06249 (mse=0.06215) | 16.2s
+Epoch 067/100 | train 0.05261 (mse=0.05226) | val 0.06365 (mse=0.06331) | 16.6s
+Epoch 068/100 | train 0.05251 (mse=0.05216) | val 0.06537 (mse=0.06508) | 16.7s
+Epoch 069/100 | train 0.05252 (mse=0.05217) | val 0.06698 (mse=0.06666) | 16.4s
+Epoch 070/100 | train 0.05249 (mse=0.05215) | val 0.06967 (mse=0.06935) | 16.1s
+Epoch 071/100 | train 0.05249 (mse=0.05214) | val 0.06504 (mse=0.06471) | 16.6s
+Epoch 072/100 | train 0.05233 (mse=0.05199) | val 0.06730 (mse=0.06696) | 16.3s
+Epoch 073/100 | train 0.05243 (mse=0.05209) | val 0.06828 (mse=0.06795) | 16.3s
+Epoch 074/100 | train 0.05235 (mse=0.05200) | val 0.06605 (mse=0.06571) | 16.3s
+Epoch 075/100 | train 0.05232 (mse=0.05197) | val 0.06230 (mse=0.06198) | 16.1s
+Epoch 076/100 | train 0.05237 (mse=0.05202) | val 0.06312 (mse=0.06278) | 16.4s
+Epoch 077/100 | train 0.05232 (mse=0.05197) | val 0.06392 (mse=0.06358) | 16.4s
+Epoch 078/100 | train 0.05237 (mse=0.05203) | val 0.06578 (mse=0.06544) | 16.3s
+Epoch 079/100 | train 0.05225 (mse=0.05191) | val 0.06398 (mse=0.06364) | 17.0s
+Epoch 080/100 | train 0.05223 (mse=0.05188) | val 0.06584 (mse=0.06550) | 16.8s
+Epoch 081/100 | train 0.05229 (mse=0.05194) | val 0.06299 (mse=0.06263) | 16.2s
+Epoch 082/100 | train 0.05229 (mse=0.05194) | val 0.06743 (mse=0.06711) | 16.6s
+Epoch 083/100 | train 0.05224 (mse=0.05190) | val 0.06528 (mse=0.06497) | 17.0s
+Epoch 084/100 | train 0.05219 (mse=0.05184) | val 0.06577 (mse=0.06544) | 17.0s
+Epoch 085/100 | train 0.05229 (mse=0.05194) | val 0.06494 (mse=0.06460) | 16.2s
+Epoch 086/100 | train 0.05226 (mse=0.05191) | val 0.06560 (mse=0.06527) | 16.4s
+Epoch 087/100 | train 0.05216 (mse=0.05181) | val 0.06560 (mse=0.06526) | 16.5s
+Epoch 088/100 | train 0.05214 (mse=0.05179) | val 0.06654 (mse=0.06619) | 16.8s
+Epoch 089/100 | train 0.05201 (mse=0.05166) | val 0.06643 (mse=0.06611) | 17.4s
+Epoch 090/100 | train 0.05213 (mse=0.05178) | val 0.06651 (mse=0.06619) | 17.2s
+Epoch 091/100 | train 0.05204 (mse=0.05169) | val 0.06805 (mse=0.06773) | 16.6s
+Epoch 092/100 | train 0.05202 (mse=0.05167) | val 0.06691 (mse=0.06657) | 16.5s
+Epoch 093/100 | train 0.05205 (mse=0.05170) | val 0.06616 (mse=0.06585) | 16.2s
+Epoch 094/100 | train 0.05212 (mse=0.05177) | val 0.06506 (mse=0.06473) | 17.0s
+Epoch 095/100 | train 0.05195 (mse=0.05160) | val 0.06670 (mse=0.06639) | 17.1s
+Epoch 096/100 | train 0.05199 (mse=0.05164) | val 0.06480 (mse=0.06449) | 16.8s
+Epoch 097/100 | train 0.05198 (mse=0.05163) | val 0.06679 (mse=0.06647) | 16.8s
+Epoch 098/100 | train 0.05206 (mse=0.05171) | val 0.06530 (mse=0.06499) | 16.6s
+Epoch 099/100 | train 0.05197 (mse=0.05163) | val 0.06497 (mse=0.06466) | 16.7s
+Epoch 100/100 | train 0.05206 (mse=0.05171) | val 0.06522 (mse=0.06490) | 16.6s

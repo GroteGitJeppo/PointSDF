@@ -14,6 +14,7 @@ def find_global_grid_half_extent(
     pcd_dir: str,
     label_ids: set[str] | list[str],
     ply_pattern: str = "*.ply",
+    margin: float = 0.0,
 ) -> float:
     """
     Mirror corepp ``MaskedCameraLaserData.find_global_bbox``.
@@ -21,6 +22,9 @@ def find_global_grid_half_extent(
     For each label, load the first matching complete-scan PLY, take the largest
     axis-aligned side length ``dmax``, then return ``dmax / 2`` as the symmetric
     half-extent used by ``get_volume_coords``.
+
+    When ``margin`` > 0, scale the side length by ``(1 + margin)`` before
+    converting to half-extent (e.g. ``margin=0.10`` → 10% padding on the cube).
     """
     dmax = 0.0
     n_read = 0
@@ -51,7 +55,10 @@ def find_global_grid_half_extent(
             f"  global bbox: skipped {len(missing)} labels with no PLY "
             f"(used {n_read} scans, dmax={dmax * 1000:.1f} mm)"
         )
-    return dmax / 2.0
+    half = dmax / 2.0
+    if margin > 0.0:
+        half *= 1.0 + margin
+    return half
 
 
 def resolve_grid_bbox(cfg: dict, label_ids: set[str] | list[str]) -> float:
@@ -72,10 +79,15 @@ def resolve_grid_bbox(cfg: dict, label_ids: set[str] | list[str]) -> float:
                 "grid_bbox is 'auto' but gt_pcd_dir is not set in the config"
             )
         pattern = cfg.get("gt_ply_pattern", "*.ply")
-        half = find_global_grid_half_extent(gt_pcd_dir, label_ids, pattern)
+        margin = float(cfg.get("grid_bbox_margin", 0.10))
+        half = find_global_grid_half_extent(
+            gt_pcd_dir, label_ids, pattern, margin=margin
+        )
+        margin_note = f", +{margin * 100:.0f}% margin" if margin > 0.0 else ""
         print(
             f"Global grid bbox (CoRe++ find_global_bbox): ±{half:.4f} m "
-            f"(side {2 * half * 1000:.1f} mm, {len(label_ids)} labels requested)"
+            f"(side {2 * half * 1000:.1f} mm{margin_note}, "
+            f"{len(label_ids)} labels requested)"
         )
         return half
     return float(raw)
