@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""Export encoder / decoder PCA figures as thesis-ready PDFs.
+
+Fits one PCA on the combined Stage~1 + encoder latent matrix so all four panels
+share the same PC axes, limits, and volume colour scale. By default encoder
+latents are averaged per tuber (one point per tuber, like Stage~1).
+
+Usage (from PointSDF_2/):
+    # Export train+val+test encoder latents on the server first:
+    python export_encoder_latents.py \\
+        --config configs/train_encoder.yaml \\
+        --checkpoint weights/encoder/<run>/best_vol_32/checkpoint.pth
+
+    python misc/export_latent_pca_thesis.py \\
+        --decoder_latents weights/decoder_latents \\
+        --encoder_latents weights/encoder/<run>/latent_dir \\
+        --output weights/thesis_figures
+
+    # Per-scan encoder cloud (~9k points) instead of tuber means:
+    python misc/export_latent_pca_thesis.py ... --encoder-aggregate scan
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from sklearn.decomposition import PCA
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from thesis_style import configure_thesis_fonts, save_thesis_pdf
+from visualize_latents import (
+    _cultivar_colors,
+    _merge_cultivar,
+    _volume_colors,
+    load_encoder_latents,
+    load_latents,
+)
+
+
+def _pc_axis_label(component: int, explained_pct: float) -> str:
+    pct = (
+        f"{explained_pct:.1f}\\%"
+        if plt.rcParams.get("text.usetex")
+        else f"{explained_pct:.1f}%"
+    )
+    return f"PC{component} ({pct})"
+
+
+def _load_meta(
+    metadata_csv: str | None, cultivar_csv: str | None
+) -> pd.DataFrame | None:
+    if not metadata_csv:
+        return None
+    meta = pd.read_csv(metadata_csv)
+    if "label" not in meta.columns:
+        print(f"  WARNING: {metadata_csv} has no 'label' column")
+        return None
+    meta = meta.set_index("label")
+    return _merge_cultivar(meta, cultivar_csv)
+
+
+def _count_subtitle(description: str, n: int) -> str:
+    if plt.rcParams.get("text.usetex"):
+        return f"{description} ($n={n}$)"
+    return f"{description} (n={n})"
+
+
+def _square_limits(xy: np.ndarray, pad_frac: float = 0.06) -> tuple[float, float, float, float]:
+    """Equal-aspect square limits covering all points in xy (N, 2)."""
+    lo = xy.min(axis=0)
+    hi = xy.max(axis=0)
+    span = float(np.max(hi - lo))
+    pad = span * pad_frac if span > 0 else 0.1
+    cx = 0.5 * (lo[0] + hi[0])
+    cy = 0.5 * (lo[1] + hi[1])
+    half = 0.5 * span + pad
+    return cx - half, cx + half, cy - half, cy + half
+
+
+def _apply_limits(ax: plt.Axes, xlim: tuple[float, float], ylim: tuple[float, float]) -> None:
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.set_aspect("equal", adjustable="box")
+
+
+def _save_pca_cultivar(
+    Z_pca: np.ndarray,
+    labels: list[str],
+    meta: pd.DataFrame | None,
+    explained: np.ndarray,
+    out_path: Path,
+    *,
+    title: str,
+    subtitle: str,
+    marker_size: float,
+    alpha: float,
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+    cult_vmax: float,
+    legend_handles,
+    c_cmap,
+) -> None:
+    c_ints, _, _ = _cultivar_colors(labels, meta)
+    fig, ax = plt.subplots(figsize=(5.5, 5.0), constrained_layout=True)
+    ax.scatter(
+        Z_pca[:, 0],
+        Z_pca[:, 1],
+        c=c_ints,
+        cmap=c_cmap,
+        vmin=-0.5,
+        vmax=cult_vmax,
+        s=marker_size,
+        alpha=alpha,
+        linewidths=0.2,
+        edgecolors="none",
+    )
+    ax.set_xlabel(_pc_axis_label(1, explained[0]))
+    ax.set_ylabel(_pc_axis_label(2, explained[1]))
+    ax.set_title(f"{title}\n{subtitle}", fontsize=10)
+    _apply_limits(ax, xlim, ylim)
+    ax.grid(True, alpha=0.3)
+    ax.legend(
+        handles=legend_handles,
+        loc="best",
+        framealpha=0.9,
+        markerscale=1.1,
+    )
+    save_thesis_pdf(fig, out_path)
+    plt.close(fig)
+    print(f"  Saved {out_path}")
+
+
+def _save_pca_volume(
+    Z_pca: np.ndarray,
+    labels: list[str],
+    meta: pd.DataFrame | None,
+    volume_col: str,
+    explained: np.ndarray,
+    out_path: Path,
+    *,
+    title: str,
+    subtitle: str,
+    marker_size: float,
+    alpha: float,
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+    vol_vmin: float,
+    vol_vmax: float,
+) -> None:
+    v_vals, v_cmap, _ = _volume_colors(labels, meta, volume_col)
+    if v_vals is None or np.all(np.isnan(v_vals)):
+        print(f"  Skipping {out_path.name} (no volume metadata)")
+        return
+    fig, ax = plt.subplots(figsize=(5.5, 5.0), constrained_layout=True)
+    sc = ax.scatter(
+        Z_pca[:, 0],
+        Z_pca[:, 1],
+        c=v_vals,
+        cmap=v_cmap,
+        vmin=vol_vmin,
+        vmax=vol_vmax,
+        s=marker_size,
+        alpha=alpha,
+        linewidths=0.2,
+        edgecolors="none",
+    )
+    ax.set_xlabel(_pc_axis_label(1, explained[0]))
+    ax.set_ylabel(_pc_axis_label(2, explained[1]))
+    ax.set_title(f"{title}\n{subtitle}", fontsize=10)
+    _apply_limits(ax, xlim, ylim)
+    ax.grid(True, alpha=0.3)
+    cbar = fig.colorbar(sc, ax=ax, shrink=0.82, pad=0.02, fraction=0.046)
+    cbar.set_label("Volume (mL)")
+    cbar.ax.tick_params(labelsize=8)
+    save_thesis_pdf(fig, out_path)
+    plt.close(fig)
+    print(f"  Saved {out_path}")
+
+
+def _global_volume_range(
+    labels_dec: list[str],
+    labels_enc: list[str],
+    meta: pd.DataFrame | None,
+    volume_col: str,
+) -> tuple[float, float]:
+    vols: list[float] = []
+    for lbl in labels_dec + labels_enc:
+        if meta is not None and lbl in meta.index and volume_col in meta.columns:
+            v = meta.loc[lbl, volume_col]
+            if pd.notna(v):
+                vols.append(float(v))
+    if not vols:
+        return 0.0, 1.0
+    return float(min(vols)), float(max(vols))
+
+
+def _aggregate_encoder_mean(
+    Z_enc: np.ndarray, labels_enc: list[str]
+) -> tuple[np.ndarray, list[str]]:
+    """Mean encoder latent over all partial scans of each tuber."""
+    buckets: dict[str, list[np.ndarray]] = {}
+    for vec, lbl in zip(Z_enc, labels_enc):
+        buckets.setdefault(lbl, []).append(vec)
+    tuber_labels = sorted(buckets.keys())
+    Z_mean = np.stack([np.mean(buckets[lbl], axis=0) for lbl in tuber_labels])
+    return Z_mean, tuber_labels
+
+
+def _cultivar_legend(meta: pd.DataFrame | None, all_labels: list[str]):
+    _, c_cmap, c_handles = _cultivar_colors(all_labels, meta)
+    cult_vmax = max(len(c_handles) - 0.5, 0.5)
+    return c_cmap, c_handles, cult_vmax
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Export decoder + encoder PCA figures as thesis PDFs"
+    )
+    parser.add_argument(
+        "--decoder_latents",
+        default="weights/decoder_latents",
+        help="Stage 1 latent directory ({label}.pth)",
+    )
+    parser.add_argument(
+        "--encoder_latents",
+        default="weights/all_latents.pth",
+        help=(
+            "Encoder all_latents.pth or latent_dir/ from export_encoder_latents.py "
+            "(train/val/test subfolders or merged all_latents.pth)"
+        ),
+    )
+    parser.add_argument(
+        "--metadata",
+        default="data/3DPotatoTwin/mesh_traits.csv",
+        help="CSV with label + volume column",
+    )
+    parser.add_argument(
+        "--volume_col",
+        default="volume (cm3)",
+        help="Volume column in --metadata",
+    )
+    parser.add_argument(
+        "--cultivar_csv",
+        default=None,
+        help="CSV with cultivar (default: data/3DPotatoTwin/ground_truth.csv)",
+    )
+    parser.add_argument(
+        "--encoder-splits",
+        nargs="+",
+        default=["train", "val", "test"],
+        metavar="SPLIT",
+        help=(
+            "When --encoder_latents is a latent_dir/, load these splits "
+            "(default: train val test). Ignored for a single .pth file."
+        ),
+    )
+    parser.add_argument(
+        "--encoder-aggregate",
+        choices=("mean", "scan"),
+        default="mean",
+        help=(
+            "mean = one encoder point per tuber (mean over partial scans; default, "
+            "matches Stage 1 count). scan = one point per partial scan."
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        default="weights/thesis_figures",
+        help="Output directory for PDF files",
+    )
+    args = parser.parse_args()
+
+    font_mode = configure_thesis_fonts()
+    print(f"Plot fonts: {font_mode}")
+
+    out_dir = Path(args.output)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Loading decoder latents: {args.decoder_latents}")
+    Z_dec, labels_dec = load_latents(args.decoder_latents)
+    print(f"  {Z_dec.shape[0]} tubers")
+
+    print(f"Loading encoder latents: {args.encoder_latents}")
+    enc_path = Path(args.encoder_latents)
+    Z_enc_raw, labels_enc_raw, scan_splits = load_encoder_latents(
+        args.encoder_latents,
+        splits=tuple(args.encoder_splits) if enc_path.is_dir() else None,
+    )
+
+    n_scans = len(labels_enc_raw)
+    split_note = ""
+    if scan_splits is not None:
+        from collections import Counter
+
+        counts = Counter(scan_splits)
+        split_note = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+        print(f"  splits: {split_note}")
+    print(f"  {n_scans} partial scans")
+
+    if args.encoder_aggregate == "mean":
+        Z_enc, labels_enc = _aggregate_encoder_mean(Z_enc_raw, labels_enc_raw)
+        print(f"  aggregated to {len(labels_enc)} tuber means")
+        enc_sub = _count_subtitle("mean latent per tuber", len(labels_enc))
+        enc_marker = 32
+        enc_alpha_vol = 0.92
+        enc_alpha_cult = 0.92
+    else:
+        Z_enc, labels_enc = Z_enc_raw, labels_enc_raw
+        enc_sub = _count_subtitle("one point per partial scan", n_scans)
+        enc_marker = 9
+        enc_alpha_vol = 0.92
+        enc_alpha_cult = 0.45
+
+    meta = _load_meta(args.metadata, args.cultivar_csv)
+
+    Z_all = np.vstack([Z_dec, Z_enc])
+    pca = PCA(n_components=2, random_state=0)
+    pca.fit(Z_all)
+    explained = pca.explained_variance_ratio_ * 100
+    print(
+        f"Combined PCA (n={len(Z_all)}): "
+        f"PC1={explained[0]:.1f}%  PC2={explained[1]:.1f}%"
+    )
+
+    Z_dec_pca = pca.transform(Z_dec)
+    Z_enc_pca = pca.transform(Z_enc)
+    Z_combined_pca = np.vstack([Z_dec_pca, Z_enc_pca])
+    x0, x1, y0, y1 = _square_limits(Z_combined_pca)
+    xlim, ylim = (x0, x1), (y0, y1)
+
+    vol_vmin, vol_vmax = _global_volume_range(
+        labels_dec, labels_enc, meta, args.volume_col
+    )
+    print(f"Shared volume colour scale: {vol_vmin:.0f}–{vol_vmax:.0f} mL")
+
+    all_labels = labels_dec + labels_enc
+    c_cmap, cult_handles, cult_vmax = _cultivar_legend(meta, all_labels)
+
+    dec_sub = _count_subtitle("one point per tuber", len(labels_dec))
+
+    dec_marker = 32
+    dec_alpha = 0.92
+
+    _save_pca_volume(
+        Z_dec_pca,
+        labels_dec,
+        meta,
+        args.volume_col,
+        explained,
+        out_dir / "latent_pca_decoder_volume.pdf",
+        title="Stage 1 reconstruct latents",
+        subtitle=dec_sub,
+        marker_size=dec_marker,
+        alpha=dec_alpha,
+        xlim=xlim,
+        ylim=ylim,
+        vol_vmin=vol_vmin,
+        vol_vmax=vol_vmax,
+    )
+    _save_pca_volume(
+        Z_enc_pca,
+        labels_enc,
+        meta,
+        args.volume_col,
+        explained,
+        out_dir / "latent_pca_encoder_volume.pdf",
+        title="Encoder latents",
+        subtitle=enc_sub,
+        marker_size=enc_marker,
+        alpha=enc_alpha_vol,
+        xlim=xlim,
+        ylim=ylim,
+        vol_vmin=vol_vmin,
+        vol_vmax=vol_vmax,
+    )
+    _save_pca_cultivar(
+        Z_dec_pca,
+        labels_dec,
+        meta,
+        explained,
+        out_dir / "latent_pca_decoder_cultivar.pdf",
+        title="Stage 1 reconstruct latents",
+        subtitle=dec_sub,
+        marker_size=dec_marker,
+        alpha=dec_alpha,
+        xlim=xlim,
+        ylim=ylim,
+        cult_vmax=cult_vmax,
+        legend_handles=cult_handles,
+        c_cmap=c_cmap,
+    )
+    _save_pca_cultivar(
+        Z_enc_pca,
+        labels_enc,
+        meta,
+        explained,
+        out_dir / "latent_pca_encoder_cultivar.pdf",
+        title="Encoder latents",
+        subtitle=enc_sub,
+        marker_size=enc_marker,
+        alpha=enc_alpha_cult,
+        xlim=xlim,
+        ylim=ylim,
+        cult_vmax=cult_vmax,
+        legend_handles=cult_handles,
+        c_cmap=c_cmap,
+    )
+
+    print(f"\nAll PDFs written to: {out_dir.resolve()}")
+
+
+if __name__ == "__main__":
+    main()

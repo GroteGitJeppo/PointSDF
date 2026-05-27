@@ -291,6 +291,14 @@ def add_results_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--only-2023",
+        action="store_true",
+        help=(
+            "Restrict to the 2023 cohort only (all 2023 partial scans, no 2025 rows). "
+            "When set with --match-2025, the 2025 volume-matched subsample is skipped."
+        ),
+    )
+    parser.add_argument(
         "--data-root",
         type=Path,
         default=None,
@@ -299,6 +307,15 @@ def add_results_args(parser: argparse.ArgumentParser) -> None:
 
 
 def maybe_apply_eda_subset(df: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame:
+    if args.only_2023:
+        df = ensure_year_column(_normalize_columns(df))
+        out = df.loc[df["year"] == 2023].copy()
+        print(
+            f"2023 only: {out['unique_id'].nunique()} tubers / {len(out)} frames "
+            f"(from {df['unique_id'].nunique()} tubers / {len(df)} frames total)"
+        )
+        return out
+
     if not args.match_2025:
         return df
     data_root = args.data_root or default_data_root()

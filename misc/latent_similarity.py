@@ -51,7 +51,7 @@ def load_stage1(latents_dir: str) -> dict[str, np.ndarray]:
         t = torch.load(f, map_location="cpu")
         if isinstance(t, dict):
             continue  # skip checkpoint files
-        result[f.stem] = t.float().numpy().ravel()
+        result[f.stem] = t.detach().float().numpy().ravel()
     return result
 
 
@@ -63,7 +63,7 @@ def load_encoder(latents_path: str) -> dict[str, np.ndarray]:
             f"{latents_path} does not contain a dict. "
             "Expected the all_latents.pth produced by test.py."
         )
-    return {stem: t.float().numpy().ravel() for stem, t in data.items()}
+    return {stem: t.detach().float().numpy().ravel() for stem, t in data.items()}
 
 
 def _stem_to_label(stem: str) -> str:

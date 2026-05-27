@@ -4,8 +4,8 @@ Latent space visualisation — PCA and t-SNE.
 Loads either:
   - Stage 1 autodecoder latents: a directory of ``{label}.pth`` tensors
     (one per unique tuber, produced by train_deepsdf.py → latent_codes/).
-  - Stage 2 encoder latents: a single ``all_latents.pth`` dict file
-    (produced by test.py → latent_dir/test/all_latents.pth),
+  - Stage 2 encoder latents: ``all_latents.pth`` or ``latent_dir/`` tree
+    (from test.py or export_encoder_latents.py — train/val/test subfolders),
     keyed by PLY stem (e.g. ``2R3-1_pcd_095``).
 
 Produces three PNG figures per run:
@@ -20,10 +20,12 @@ Usage (run from PointSDF_2/):
         --metadata data/3DPotatoTwin/ground_truth.csv \\
         --output misc/results/latents_stage1
 
-    # Stage 2 encoder latents (single file)
+    # Stage 2 encoder latents (directory with train/val/test exports)
     python misc/visualize_latents.py \\
-        --latents weights/encoder/<run>/latent_dir/all_latents.pth \\
-        --metadata data/3DPotatoTwin/ground_truth.csv \\
+        --latents weights/encoder/<run>/latent_dir \\
+        --metadata data/3DPotatoTwin/mesh_traits.csv \\
+        --volume_col "volume (cm3)" \\
+        --cultivar_csv data/3DPotatoTwin/ground_truth.csv \\
         --output misc/results/latents_stage2
 """
 
@@ -40,6 +42,33 @@ import torch
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import LabelEncoder
+
+DEFAULT_CULTIVAR_CSV = (
+    Path(__file__).resolve().parent.parent / "data" / "3DPotatoTwin" / "ground_truth.csv"
+)
+
+
+def _merge_cultivar(meta: pd.DataFrame, cultivar_csv: str | None) -> pd.DataFrame:
+    """Add ``cultivar`` from a second CSV when the primary metadata lacks it."""
+    if "cultivar" in meta.columns:
+        return meta
+    path = Path(cultivar_csv) if cultivar_csv else DEFAULT_CULTIVAR_CSV
+    if not path.is_file():
+        print(
+            f"  WARNING: metadata has no 'cultivar' column and {path} was not found "
+            "— cultivar plots will show 'unknown' only"
+        )
+        return meta
+    cult_df = pd.read_csv(path)
+    if "label" not in cult_df.columns or "cultivar" not in cult_df.columns:
+        print(f"  WARNING: {path} lacks label/cultivar columns — skipping cultivar merge")
+        return meta
+    cult = cult_df.drop_duplicates("label").set_index("label")["cultivar"]
+    meta = meta.copy()
+    meta["cultivar"] = meta.index.map(cult)
+    n_known = int(meta["cultivar"].notna().sum())
+    print(f"  Merged cultivar from {path} ({n_known}/{len(meta)} labels matched)")
+    return meta
 
 
 # ---------------------------------------------------------------------------
@@ -58,11 +87,88 @@ def _stem_to_label(stem: str) -> str:
     return stem
 
 
+ENCODER_SPLITS = ("train", "val", "test")
+
+
+def _latent_dict_to_arrays(
+    data: dict[str, torch.Tensor],
+) -> tuple[np.ndarray, list[str], list[str]]:
+    stems = sorted(data.keys())
+    vecs = [data[s].detach().float().numpy().ravel() for s in stems]
+    labels = [_stem_to_label(s) for s in stems]
+    return np.stack(vecs), labels, stems
+
+
+def load_encoder_latents(
+    path: str,
+    splits: tuple[str, ...] | None = None,
+) -> tuple[np.ndarray, list[str], list[str] | None]:
+    """Load Stage 2 encoder latents from a file or export directory.
+
+    Accepts:
+      - ``all_latents.pth`` (flat dict from test.py or export_encoder_latents.py)
+      - ``<run>/latent_dir/`` with ``train/``, ``val/``, ``test/`` subfolders
+      - ``<run>/latent_dir/all_latents.pth`` merged export (optional ``scan_splits.pth``)
+
+    Returns
+    -------
+    latents : (N, latent_size)
+    labels  : tuber unique_id per row
+    scan_splits : split name per row, or None if unknown
+    """
+    p = Path(path)
+
+    if p.is_file() and p.suffix == ".pth":
+        data = torch.load(p, map_location="cpu")
+        if not isinstance(data, dict):
+            raise ValueError(f"{path} must be a dict[str, Tensor] from test.py / export_encoder_latents.py")
+        Z, labels, stems = _latent_dict_to_arrays(data)
+        split_map_path = p.parent / "scan_splits.pth"
+        if split_map_path.is_file():
+            split_map = torch.load(split_map_path, map_location="cpu")
+            scan_splits = [str(split_map.get(stem, "unknown")) for stem in stems]
+        else:
+            scan_splits = None
+        return Z, labels, scan_splits
+
+    if p.is_dir():
+        merged = p / "all_latents.pth"
+        if merged.is_file():
+            return load_encoder_latents(str(merged), splits=splits)
+
+        use_splits = splits or ENCODER_SPLITS
+        combined: dict[str, torch.Tensor] = {}
+        split_map: dict[str, str] = {}
+        for split in use_splits:
+            split_file = p / split / "all_latents.pth"
+            if not split_file.is_file():
+                continue
+            buf = torch.load(split_file, map_location="cpu")
+            if not isinstance(buf, dict):
+                raise ValueError(f"{split_file} must be a dict[str, Tensor]")
+            for stem, tensor in buf.items():
+                if stem in combined:
+                    raise ValueError(f"Duplicate PLY stem {stem!r} across splits")
+                combined[stem] = tensor
+                split_map[stem] = split
+
+        if combined:
+            Z, labels, stems = _latent_dict_to_arrays(combined)
+            scan_splits = [split_map[stem] for stem in stems]
+            return Z, labels, scan_splits
+
+    raise FileNotFoundError(
+        f"No encoder latents found at {path}. "
+        "Run export_encoder_latents.py or test.py first."
+    )
+
+
 def load_latents(path: str) -> tuple[np.ndarray, list[str]]:
     """Load latent vectors and return (matrix, labels).
 
     Accepts either:
       - A directory of individual ``{label}.pth`` files (Stage 1).
+      - Stage 2 encoder ``all_latents.pth`` or ``latent_dir/`` export tree.
       - A single ``.pth`` file containing a ``dict[str, Tensor]`` (Stage 2).
 
     Returns
@@ -73,6 +179,12 @@ def load_latents(path: str) -> tuple[np.ndarray, list[str]]:
     p = Path(path)
 
     if p.is_dir():
+        if (p / "all_latents.pth").is_file() or any(
+            (p / split / "all_latents.pth").is_file() for split in ENCODER_SPLITS
+        ):
+            Z, labels, _ = load_encoder_latents(str(p))
+            return Z, labels
+
         pth_files = sorted(p.glob("*.pth"))
         if not pth_files:
             raise FileNotFoundError(f"No .pth files found in {p}")
@@ -80,22 +192,17 @@ def load_latents(path: str) -> tuple[np.ndarray, list[str]]:
         for f in pth_files:
             t = torch.load(f, map_location="cpu")
             if isinstance(t, dict):
-                # checkpoint dict — skip (shouldn't happen in latent_codes/)
                 continue
-            vecs.append(t.float().numpy().ravel())
+            vecs.append(t.detach().float().numpy().ravel())
             labels.append(_stem_to_label(f.stem))
         return np.stack(vecs), labels
 
     if p.suffix == ".pth":
         data = torch.load(p, map_location="cpu")
         if isinstance(data, dict):
-            vecs, labels = [], []
-            for stem, t in data.items():
-                vecs.append(t.float().numpy().ravel())
-                labels.append(_stem_to_label(stem))
-            return np.stack(vecs), labels
-        # Single tensor — no label info
-        return data.float().numpy().reshape(1, -1), ["unknown"]
+            Z, labels, _ = _latent_dict_to_arrays(data)
+            return Z, labels
+        return data.detach().float().numpy().reshape(1, -1), ["unknown"]
 
     raise ValueError(f"--latents must be a directory or a .pth file, got: {path}")
 
@@ -133,11 +240,13 @@ def _scatter(
 
 def _cultivar_colors(labels: list[str], meta: pd.DataFrame | None):
     """Return integer colour indices and a legend-ready list of patch handles."""
+    cultivars = []
     if meta is not None and "cultivar" in meta.columns:
-        cultivars = [
-            str(meta.loc[lbl, "cultivar"]) if lbl in meta.index else "unknown"
-            for lbl in labels
-        ]
+        for lbl in labels:
+            if lbl in meta.index and pd.notna(meta.loc[lbl, "cultivar"]):
+                cultivars.append(str(meta.loc[lbl, "cultivar"]).strip())
+            else:
+                cultivars.append("unknown")
     else:
         cultivars = ["unknown"] * len(labels)
 
@@ -171,7 +280,8 @@ def _volume_colors(labels: list[str], meta: pd.DataFrame | None, volume_col: str
 # ---------------------------------------------------------------------------
 
 def main(latents_path: str, metadata_csv: str | None, output_dir: str,
-         volume_col: str, tsne_perplexity: int, tsne_seed: int) -> None:
+         volume_col: str, cultivar_csv: str | None,
+         tsne_perplexity: int, tsne_seed: int) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Loading latents from: {latents_path}")
@@ -187,6 +297,8 @@ def main(latents_path: str, metadata_csv: str | None, output_dir: str,
         else:
             print("  WARNING: metadata CSV has no 'label' column — skipping metadata")
             meta = None
+        if meta is not None:
+            meta = _merge_cultivar(meta, cultivar_csv)
 
     # --- PCA ---
     print("Running PCA ...")
@@ -235,7 +347,7 @@ def main(latents_path: str, metadata_csv: str | None, output_dir: str,
     perp = min(tsne_perplexity, max(5, n // 3))
     print(f"Running t-SNE (perplexity={perp}, n={n}) ...")
     tsne = TSNE(n_components=2, perplexity=perp, random_state=tsne_seed,
-                n_iter=1000, init="pca")
+                max_iter=1000, init="pca")
     Z_tsne = tsne.fit_transform(Z)
 
     fig, ax = plt.subplots(figsize=(7, 6))
@@ -264,7 +376,14 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--metadata", default=None,
-        help="CSV with 'label', 'cultivar', volume columns (e.g. ground_truth.csv)",
+        help="CSV indexed by label for volume etc. (e.g. mesh_traits.csv, ground_truth.csv)",
+    )
+    parser.add_argument(
+        "--cultivar_csv", default=None,
+        help=(
+            "CSV with label+cultivar when --metadata lacks cultivar (e.g. ground_truth.csv). "
+            f"Default when omitted: {DEFAULT_CULTIVAR_CSV.relative_to(Path(__file__).resolve().parent.parent)}"
+        ),
     )
     parser.add_argument(
         "--output", default="misc/results/latents",
@@ -288,6 +407,7 @@ if __name__ == "__main__":
         metadata_csv=args.metadata,
         output_dir=args.output,
         volume_col=args.volume_col,
+        cultivar_csv=args.cultivar_csv,
         tsne_perplexity=args.tsne_perplexity,
         tsne_seed=args.tsne_seed,
     )

@@ -27,7 +27,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Report CoRe++ paper metrics (Table 4 style) by GT volume bin. "
-            "Uses every partial point-cloud row in the CSV (no per-tuber averaging)."
+            "Uses every partial point-cloud row in the CSV (no per-tuber averaging). "
+            "Use --match-2025 for eda.ipynb 2025 subsample, or --only-2023 for 2023 only."
         )
     )
     add_results_args(parser)
