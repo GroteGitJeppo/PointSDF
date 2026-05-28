@@ -30,6 +30,27 @@ EDA_MATCH_SEED = 50
 EDA_MIN_TRAIN_PER_BIN = 2
 EDA_TARGET_MATCH_N = 90
 EDA_MAX_OVERSAMPLE_RATIO = 5.0
+SPHERICITY_COL = "sphericity"
+CONVEXITY_COL = "convexity"
+TRAIT_BOUND_COLS = (SPHERICITY_COL, CONVEXITY_COL)
+
+
+def _filter_pool_to_2023_train_trait_bounds(
+    pool: pd.DataFrame,
+    train_2023: pd.DataFrame,
+    *,
+    id_col: str = "unique_id",
+    trait_cols: tuple[str, ...] = TRAIT_BOUND_COLS,
+) -> pd.DataFrame:
+    """Keep pool tubers whose traits lie within 2023 train min–max (inclusive)."""
+    out = pool.copy()
+    for col in trait_cols:
+        if col not in train_2023.columns or col not in out.columns:
+            raise KeyError(f"Missing {col!r} for trait-bound filter")
+        lo = float(train_2023[col].min())
+        hi = float(train_2023[col].max())
+        out = out[(out[col] >= lo) & (out[col] <= hi)]
+    return out
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -132,15 +153,16 @@ def select_2025_matched_ids(
     target_match_n: int = EDA_TARGET_MATCH_N,
     max_oversample_ratio: float = EDA_MAX_OVERSAMPLE_RATIO,
 ) -> list[str]:
-    """Same 2025 tuber subsample as misc/eda.ipynb (train-supported 50 mL bins)."""
+    """Same 2025 tuber subsample as misc/eda.ipynb (volume bins + 2023 trait bounds)."""
     traits = pd.read_csv(data_root / "mesh_traits.csv")
     splits = pd.read_csv(data_root / "splits.csv")
     meta = splits.merge(traits, on="label", how="left")
     meta["gt_volume_ml"] = pd.to_numeric(meta["volume (cm3)"], errors="coerce")
 
+    trait_subset = ["gt_volume_ml", *TRAIT_BOUND_COLS]
     train_2023 = meta[
         (meta["split"] == "train") & (meta["year"] == 2023)
-    ].dropna(subset=["gt_volume_ml"])
+    ].dropna(subset=trait_subset)
 
     df = ensure_year_column(_normalize_columns(df))
     pot_2025 = (
@@ -148,6 +170,20 @@ def select_2025_matched_ids(
         .groupby("unique_id", as_index=False)
         .agg(gt_volume_ml=("gt_volume_ml", "first"))
     )
+    trait_by_label = meta.drop_duplicates("label").set_index("label")[list(TRAIT_BOUND_COLS)]
+    pot_2025 = pot_2025.merge(
+        trait_by_label,
+        left_on="unique_id",
+        right_index=True,
+        how="left",
+    )
+    n_pool_before = len(pot_2025)
+    pot_2025 = _filter_pool_to_2023_train_trait_bounds(pot_2025, train_2023)
+    if len(pot_2025) < n_pool_before:
+        print(
+            f"  2025 trait filter (within 2023 train {list(TRAIT_BOUND_COLS)}): "
+            f"{len(pot_2025)}/{n_pool_before} tubers"
+        )
 
     vols_ref = pd.concat(
         [train_2023["gt_volume_ml"], pot_2025["gt_volume_ml"]],
@@ -268,6 +304,34 @@ def format_summary_table(summary: pd.DataFrame) -> str:
     return display.to_string(float_format=lambda x: f"{x:.1f}")
 
 
+def mean_volume_per_potato(df: pd.DataFrame) -> pd.DataFrame:
+    """One row per tuber: mean predicted volume across partial-scan frames."""
+    out = ensure_year_column(_normalize_columns(df))
+    return out.groupby("unique_id", as_index=False).agg(
+        pred_volume_ml=("pred_volume_ml", "mean"),
+        gt_volume_ml=("gt_volume_ml", "first"),
+        cultivar=("cultivar", "first"),
+        year=("year", "first"),
+    )
+
+
+def subset_analysis_frames(
+    df_all: pd.DataFrame, selected_2025_ids: list[str]
+) -> pd.DataFrame:
+    """All 2023 frames + volume-matched 2025 tubers (misc/eda.ipynb analysis set)."""
+    df_all = ensure_year_column(_normalize_columns(df_all))
+    mask_2023 = df_all["year"].eq(2023)
+    mask_2025 = df_all["year"].eq(2025) & df_all["unique_id"].isin(selected_2025_ids)
+    out = pd.concat(
+        [df_all.loc[mask_2023], df_all.loc[mask_2025]],
+        ignore_index=True,
+    )
+    sort_cols = ["unique_id"]
+    if "frame_id" in out.columns:
+        sort_cols.append("frame_id")
+    return out.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
+
+
 def load_results_csv(path: Path) -> pd.DataFrame:
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -287,7 +351,7 @@ def add_results_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help=(
             "Use the same 2025 subsample as misc/eda.ipynb: all 2023 frames plus "
-            "volume-matched 2025 tubers (50 mL bins, seed=50, target_n=90)"
+            "volume-matched 2025 tubers (50 mL bins, 2023 sphericity/convexity bounds, seed=50, target_n=90)"
         ),
     )
     parser.add_argument(

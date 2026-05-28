@@ -8,10 +8,14 @@ Loads either:
     (from test.py or export_encoder_latents.py — train/val/test subfolders),
     keyed by PLY stem (e.g. ``2R3-1_pcd_095``).
 
-Produces three PNG figures per run:
-  - pca_cultivar.png   — PCA 2-D, points coloured by cultivar
-  - pca_volume.png     — PCA 2-D, points coloured by ground-truth volume
-  - tsne_cultivar.png  — t-SNE 2-D, points coloured by cultivar
+Produces PNG figures per run:
+  - pca_cultivar.png      — PCA 2-D, points coloured by cultivar
+  - pca_volume.png        — PCA 2-D, points coloured by ground-truth volume
+  - pca_sphericity.png    — PCA 2-D, trait coloured (global spectrum scale)
+  - pca_convexity.png     — PCA 2-D, trait coloured (global spectrum scale)
+  - pca_aspect_ratio.png  — PCA 2-D, trait coloured (global spectrum scale)
+  - pca_volume_surface_ratio.png — PCA 2-D, trait coloured (global spectrum scale)
+  - tsne_cultivar.png     — t-SNE 2-D, points coloured by cultivar
 
 Usage (run from PointSDF_2/):
     # Stage 1 latents (directory)
@@ -35,6 +39,7 @@ import argparse
 import os
 from pathlib import Path
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -238,7 +243,41 @@ def _scatter(
         plt.colorbar(sc, ax=ax, label=colorbar_label, shrink=0.8)
 
 
-def _cultivar_colors(labels: list[str], meta: pd.DataFrame | None):
+def _year_for_label(label: str, meta: pd.DataFrame | None) -> int | None:
+    if meta is None or label not in meta.index:
+        return None
+    row = meta.loc[label]
+    year_val = np.nan
+    if "year" in meta.columns:
+        year_val = pd.to_numeric(row.get("year"), errors="coerce")
+    if pd.isna(year_val) and "growing_season" in meta.columns:
+        year_val = pd.to_numeric(row.get("growing_season"), errors="coerce")
+    if pd.isna(year_val):
+        return None
+    return int(year_val)
+
+
+def filter_latents_by_year(
+    Z: np.ndarray,
+    labels: list[str],
+    meta: pd.DataFrame | None,
+    year: int | None,
+) -> tuple[np.ndarray, list[str]]:
+    """Keep rows whose tuber label belongs to ``year`` (None = no filter)."""
+    if year is None:
+        return Z, labels
+    keep = [i for i, lbl in enumerate(labels) if _year_for_label(lbl, meta) == year]
+    if not keep:
+        raise ValueError(f"No latents matched year={year}")
+    idx = np.array(keep)
+    return Z[idx], [labels[i] for i in keep]
+
+
+def _cultivar_colors(
+    labels: list[str],
+    meta: pd.DataFrame | None,
+    cultivar_idx: dict[str, int] | None = None,
+):
     """Return integer colour indices and a legend-ready list of patch handles."""
     cultivars = []
     if meta is not None and "cultivar" in meta.columns:
@@ -250,15 +289,16 @@ def _cultivar_colors(labels: list[str], meta: pd.DataFrame | None):
     else:
         cultivars = ["unknown"] * len(labels)
 
-    unique_cult = sorted(set(cultivars))
-    cmap = plt.get_cmap("tab10", len(unique_cult))
-    cult_idx = {c: i for i, c in enumerate(unique_cult)}
-    color_ints = np.array([cult_idx[c] for c in cultivars])
-
+    if cultivar_idx is None:
+        unique_cult = sorted(set(cultivars))
+        cultivar_idx = {c: i for i, c in enumerate(unique_cult)}
+    cmap = plt.get_cmap("tab10", max(len(cultivar_idx), 1))
+    color_ints = np.array([cultivar_idx.get(c, 0) for c in cultivars])
+    unique_cult = sorted(cultivar_idx.keys())
     handles = [
         plt.Line2D(
             [0], [0], marker="o", color="w",
-            markerfacecolor=cmap(cult_idx[c]), markersize=7, label=c
+            markerfacecolor=cmap(cultivar_idx[c]), markersize=7, label=c
         )
         for c in unique_cult
     ]
@@ -275,13 +315,116 @@ def _volume_colors(labels: list[str], meta: pd.DataFrame | None, volume_col: str
     return vols, "viridis", volume_col
 
 
+def _trait_values(
+    labels: list[str], meta: pd.DataFrame | None, trait_col: str
+) -> np.ndarray | None:
+    if meta is None or trait_col not in meta.columns:
+        return None
+    return np.array([
+        float(meta.loc[lbl, trait_col])
+        if lbl in meta.index and pd.notna(meta.loc[lbl, trait_col])
+        else np.nan
+        for lbl in labels
+    ])
+
+
+def _trait_colors(labels: list[str], meta: pd.DataFrame | None, trait_col: str):
+    vals = _trait_values(labels, meta, trait_col)
+    if vals is None:
+        return None, None, None
+    return vals, "viridis", trait_col
+
+
+def _trait_range(
+    meta: pd.DataFrame | None,
+    trait_col: str,
+    cohort_year: int | None = 2023,
+) -> tuple[float, float] | None:
+    """Min/max of ``trait_col``; ``cohort_year=None`` uses all tubers in metadata."""
+    if meta is None or trait_col not in meta.columns:
+        return None
+    if cohort_year is not None and "year" in meta.columns:
+        years = pd.to_numeric(meta["year"], errors="coerce")
+        subset = meta.loc[years == cohort_year]
+    else:
+        subset = meta
+    vals = pd.to_numeric(subset[trait_col], errors="coerce").dropna()
+    if vals.empty:
+        return None
+    return float(vals.min()), float(vals.max())
+
+
+def _cohort_trait_range(
+    meta: pd.DataFrame | None,
+    trait_col: str,
+    cohort_year: int = 2023,
+) -> tuple[float, float] | None:
+    return _trait_range(meta, trait_col, cohort_year)
+
+
+def spectrum_colormap() -> mcolors.LinearSegmentedColormap:
+    """Dark purple → blue → green → yellow → orange → red (low → high)."""
+    stops = [
+        (0.00, (0.22, 0.05, 0.35)),
+        (0.20, (0.12, 0.47, 0.71)),
+        (0.40, (0.17, 0.75, 0.30)),
+        (0.55, (0.98, 0.85, 0.15)),
+        (0.70, (1.00, 0.50, 0.05)),
+        (1.00, (0.86, 0.15, 0.15)),
+    ]
+    return mcolors.LinearSegmentedColormap.from_list("spectrum_pgyor", stops)
+
+
+def comparison_metric_scales(
+    meta: pd.DataFrame | None,
+    col: str,
+    *,
+    ref_year: int = 2023,
+    use_spectrum: bool = True,
+    range_margin_frac: float = 0.0,
+    vmin_floor: float | None = None,
+    vmax_cap: float | None = None,
+) -> tuple[float, float, mcolors.Colormap | str, float] | None:
+    """Global [vmin, vmax] on all tubers, padded by ``range_margin_frac`` of the data span."""
+    global_range = _trait_range(meta, col, cohort_year=None)
+    if global_range is None:
+        return None
+    vmin, vmax = global_range
+    span = vmax - vmin
+    if span > 0 and range_margin_frac > 0:
+        pad = span * range_margin_frac
+        vmin -= pad
+        vmax += pad
+    if vmin_floor is not None:
+        vmin = max(vmin, vmin_floor)
+    if vmax_cap is not None:
+        vmax = min(vmax, vmax_cap)
+        vmin = min(vmin, vmax)
+    ref_range = _trait_range(meta, col, cohort_year=ref_year)
+    ref_max = ref_range[1] if ref_range is not None else vmax
+    cmap: mcolors.Colormap | str = spectrum_colormap() if use_spectrum else "viridis"
+    return vmin, vmax, cmap, ref_max
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def main(latents_path: str, metadata_csv: str | None, output_dir: str,
-         volume_col: str, cultivar_csv: str | None,
-         tsne_perplexity: int, tsne_seed: int) -> None:
+def main(
+    latents_path: str,
+    metadata_csv: str | None,
+    output_dir: str,
+    volume_col: str,
+    sphericity_col: str,
+    convexity_col: str,
+    aspect_ratio_col: str,
+    volume_surface_ratio_col: str,
+    color_scale_year: int,
+    cultivar_csv: str | None,
+    tsne_perplexity: int,
+    tsne_seed: int,
+    year: int | None,
+) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Loading latents from: {latents_path}")
@@ -299,6 +442,11 @@ def main(latents_path: str, metadata_csv: str | None, output_dir: str,
             meta = None
         if meta is not None:
             meta = _merge_cultivar(meta, cultivar_csv)
+
+    if year is not None:
+        before = len(labels)
+        Z, labels = filter_latents_by_year(Z, labels, meta, year)
+        print(f"  year filter {year}: kept {len(labels)}/{before} points")
 
     # --- PCA ---
     print("Running PCA ...")
@@ -323,15 +471,23 @@ def main(latents_path: str, metadata_csv: str | None, output_dir: str,
     print(f"  Saved {out_path}")
 
     # PCA — coloured by volume
-    v_vals, v_cmap, v_label = _volume_colors(labels, meta, volume_col)
-    if v_vals is not None and not np.all(np.isnan(v_vals)):
+    v_vals, _, v_label = _volume_colors(labels, meta, volume_col)
+    vol_scales = comparison_metric_scales(
+        meta,
+        volume_col,
+        use_spectrum=True,
+        range_margin_frac=0.0,
+        vmin_floor=0.0,
+    )
+    if v_vals is not None and not np.all(np.isnan(v_vals)) and vol_scales is not None:
+        vol_vmin, vol_vmax, vol_cmap, _ = vol_scales
         fig, ax = plt.subplots(figsize=(7, 6))
         _scatter(
             ax, Z_pca, v_vals,
             title=f"PCA — volume ({volume_col})"
                   f"  (PC1 {explained[0]:.1f}%, PC2 {explained[1]:.1f}%)",
-            cmap=v_cmap,
-            vmin=np.nanmin(v_vals), vmax=np.nanmax(v_vals),
+            cmap=vol_cmap,
+            vmin=vol_vmin, vmax=vol_vmax,
             colorbar_label=f"{volume_col} (mL)",
         )
         out_path = os.path.join(output_dir, "pca_volume.png")
@@ -341,6 +497,50 @@ def main(latents_path: str, metadata_csv: str | None, output_dir: str,
         print(f"  Saved {out_path}")
     else:
         print("  Skipping pca_volume.png (no volume data found)")
+
+    for trait_col, out_name, cbar_label in (
+        (sphericity_col, "pca_sphericity.png", "Sphericity"),
+        (convexity_col, "pca_convexity.png", "Convexity"),
+        (aspect_ratio_col, "pca_aspect_ratio.png", "Aspect ratio"),
+        (volume_surface_ratio_col, "pca_volume_surface_ratio.png", "Volume/surface ratio"),
+    ):
+        t_vals, _, _ = _trait_colors(labels, meta, trait_col)
+        vmax_cap = 1.0 if trait_col in (sphericity_col, convexity_col) else None
+        scales = comparison_metric_scales(
+            meta,
+            trait_col,
+            ref_year=color_scale_year,
+            use_spectrum=True,
+            range_margin_frac=0.0,
+            vmax_cap=vmax_cap,
+        )
+        if t_vals is None or np.all(np.isnan(t_vals)) or scales is None:
+            print(f"  Skipping {out_name} (no {trait_col!r} in metadata)")
+            continue
+        t_vmin, t_vmax, t_cmap, t_ref = scales
+        print(
+            f"  {trait_col} colour scale (all tubers, spectrum): "
+            f"{t_vmin:.3f}–{t_vmax:.3f} ({color_scale_year} max {t_ref:.3f})"
+        )
+        fig, ax = plt.subplots(figsize=(7, 6))
+        _scatter(
+            ax,
+            Z_pca,
+            t_vals,
+            title=(
+                f"PCA — {trait_col}  "
+                f"(PC1 {explained[0]:.1f}%, PC2 {explained[1]:.1f}%)"
+            ),
+            cmap=t_cmap,
+            vmin=t_vmin,
+            vmax=t_vmax,
+            colorbar_label=cbar_label,
+        )
+        out_path = os.path.join(output_dir, out_name)
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=150)
+        plt.close(fig)
+        print(f"  Saved {out_path}")
 
     # --- t-SNE ---
     n = Z.shape[0]
@@ -394,6 +594,26 @@ if __name__ == "__main__":
         help="Column name for volume in metadata CSV (default: volume_ml)",
     )
     parser.add_argument(
+        "--sphericity_col", default="sphericity",
+        help="Sphericity column in metadata CSV (default: sphericity)",
+    )
+    parser.add_argument(
+        "--convexity_col", default="convexity",
+        help="Convexity column in metadata CSV (default: convexity)",
+    )
+    parser.add_argument(
+        "--aspect_ratio_col", default="aspect ratio",
+        help="Aspect ratio column in metadata CSV (default: aspect ratio)",
+    )
+    parser.add_argument(
+        "--volume_surface_ratio_col", default="volume/surface ratio",
+        help="Volume/surface ratio column in metadata CSV (default: volume/surface ratio)",
+    )
+    parser.add_argument(
+        "--color_scale_year", type=int, default=2023,
+        help="Cohort year for trait colour limits (default: 2023)",
+    )
+    parser.add_argument(
         "--tsne_perplexity", type=int, default=30,
         help="t-SNE perplexity (capped at n//3; default: 30)",
     )
@@ -401,13 +621,26 @@ if __name__ == "__main__":
         "--tsne_seed", type=int, default=42,
         help="Random seed for t-SNE (default: 42)",
     )
+    parser.add_argument(
+        "--year",
+        default="2023",
+        choices=("2023", "2025", "all"),
+        help="Keep only tubers from this cohort year (default: 2023)",
+    )
     args = parser.parse_args()
+    year = None if args.year == "all" else int(args.year)
     main(
         latents_path=args.latents,
         metadata_csv=args.metadata,
         output_dir=args.output,
         volume_col=args.volume_col,
+        sphericity_col=args.sphericity_col,
+        convexity_col=args.convexity_col,
+        aspect_ratio_col=args.aspect_ratio_col,
+        volume_surface_ratio_col=args.volume_surface_ratio_col,
+        color_scale_year=args.color_scale_year,
         cultivar_csv=args.cultivar_csv,
         tsne_perplexity=args.tsne_perplexity,
         tsne_seed=args.tsne_seed,
+        year=year,
     )

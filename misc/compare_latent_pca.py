@@ -27,6 +27,8 @@ import torch
 import torch.nn.functional as F
 from sklearn.decomposition import PCA
 
+from visualize_latents import _year_for_label
+
 DEFAULT_CULTIVAR_CSV = (
     Path(__file__).resolve().parent.parent / "data" / "3DPotatoTwin" / "ground_truth.csv"
 )
@@ -194,8 +196,11 @@ def main(
     metadata_csv: str | None,
     volume_col: str,
     cultivar_csv: str | None,
+    year: int | None,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
+
+    meta = load_metadata(metadata_csv, cultivar_csv)
 
     print(f"Loading Stage 1 latents from: {stage1_dir}")
     stage1 = load_stage1(stage1_dir)
@@ -205,6 +210,17 @@ def main(
     encoder = load_encoder(encoder_path)
     enc_mean = encoder_mean_per_tuber(encoder)
     print(f"  {len(encoder)} scans → {len(enc_mean)} tuber means")
+
+    if year is not None:
+        stage1 = {
+            lbl: vec for lbl, vec in stage1.items()
+            if _year_for_label(lbl, meta) == year
+        }
+        enc_mean = {
+            lbl: vec for lbl, vec in enc_mean.items()
+            if _year_for_label(lbl, meta) == year
+        }
+        print(f"  year filter {year}: {len(stage1)} Stage 1 tubers, {len(enc_mean)} encoder tubers")
 
     shared = sorted(set(stage1) & set(enc_mean))
     if not shared:
@@ -234,8 +250,6 @@ def main(
         ).item())
         for lbl in shared
     ]
-
-    meta = load_metadata(metadata_csv, cultivar_csv)
 
     rows = []
     for i, lbl in enumerate(shared):
@@ -335,7 +349,14 @@ if __name__ == "__main__":
         "--output", default="misc/results/latents_compare_pca",
         help="Output directory for PNG + CSV",
     )
+    parser.add_argument(
+        "--year",
+        default="2023",
+        choices=("2023", "2025", "all"),
+        help="Keep only tubers from this cohort year (default: 2023)",
+    )
     args = parser.parse_args()
+    year = None if args.year == "all" else int(args.year)
     main(
         stage1_dir=args.stage1_latents,
         encoder_path=args.encoder_latents,
@@ -343,4 +364,5 @@ if __name__ == "__main__":
         metadata_csv=args.metadata,
         volume_col=args.volume_col,
         cultivar_csv=args.cultivar_csv,
+        year=year,
     )

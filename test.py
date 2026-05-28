@@ -161,7 +161,7 @@ def _load_gt_pcd(gt_pcd_dir: str, unique_id: str, ply_pattern: str):
 def _chamfer_and_pr_one_pass(gt_pcd, mesh, cd_metric: ChamferDistance, pr_metric: PrecisionRecall):
     """
     Same semantics as separate ChamferDistance.update + PrecisionRecall.update +
-    compute_at_threshold(0.005), but one mesh→point cloud conversion (1M samples)
+    compute_at_threshold(0.005), but one mesh→point cloud conversion
     and one pair of Open3D distance computations instead of two copies.
     """
     if cd_metric.prediction_is_empty(mesh):
@@ -264,10 +264,6 @@ def main(cfg: dict, checkpoint_path: str):
     if max_hull_points is not None:
         max_hull_points = int(max_hull_points)
 
-    # grid_center shifts the SDF query grid from the origin to the position where
-    # the complete laser scans actually live in the scanner coordinate frame.
-    # Required when the decoder was trained on uncentered data (e.g. corepp weights).
-    # Compute the value once on the server with the script in train_encoder.yaml.
     grid_center = torch.tensor(
         cfg.get('grid_center', [0.0, 0.0, 0.0]), dtype=torch.float, device=device
     )

@@ -35,6 +35,15 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
+from visualize_latents import _merge_cultivar, _year_for_label
+
+DEFAULT_METADATA = (
+    Path(__file__).resolve().parent.parent / "data" / "3DPotatoTwin" / "mesh_traits.csv"
+)
+DEFAULT_CULTIVAR_CSV = (
+    Path(__file__).resolve().parent.parent / "data" / "3DPotatoTwin" / "ground_truth.csv"
+)
+
 
 # ---------------------------------------------------------------------------
 # Loaders
@@ -156,9 +165,26 @@ def _pairwise_heatmap(stage1: dict[str, np.ndarray], output_dir: str) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def main(stage1_dir: str, encoder_path: str, output_dir: str,
-         pairwise: bool) -> None:
+def main(
+    stage1_dir: str,
+    encoder_path: str,
+    output_dir: str,
+    pairwise: bool,
+    metadata_csv: str | None,
+    cultivar_csv: str | None,
+    year: int | None,
+) -> None:
     os.makedirs(output_dir, exist_ok=True)
+
+    meta = None
+    if metadata_csv:
+        meta = pd.read_csv(metadata_csv)
+        if "label" in meta.columns:
+            meta = meta.set_index("label")
+            meta = _merge_cultivar(meta, cultivar_csv)
+        else:
+            print("  WARNING: metadata CSV has no 'label' column — skipping year filter")
+            meta = None
 
     print(f"Loading Stage 1 latents from: {stage1_dir}")
     stage1 = load_stage1(stage1_dir)
@@ -168,13 +194,24 @@ def main(stage1_dir: str, encoder_path: str, output_dir: str,
     encoder = load_encoder(encoder_path)
     print(f"  {len(encoder)} encoder latents loaded")
 
+    if year is not None and meta is not None:
+        stage1 = {
+            lbl: vec for lbl, vec in stage1.items()
+            if _year_for_label(lbl, meta) == year
+        }
+        print(f"  year filter {year}: {len(stage1)} Stage 1 tubers")
+
     # --- Match and compute similarity ---
     rows = []
     per_tuber: dict[str, list[float]] = {}
     skipped = 0
+    year_skipped = 0
 
     for stem, enc_vec in sorted(encoder.items()):
         label = _stem_to_label(stem)
+        if year is not None and meta is not None and _year_for_label(label, meta) != year:
+            year_skipped += 1
+            continue
         if label not in stage1:
             skipped += 1
             continue
@@ -192,6 +229,8 @@ def main(stage1_dir: str, encoder_path: str, output_dir: str,
 
     if skipped:
         print(f"  WARNING: {skipped} encoder stems had no matching Stage 1 latent (skipped)")
+    if year_skipped:
+        print(f"  year filter {year}: skipped {year_skipped} encoder scans")
 
     df = pd.DataFrame(rows)
     csv_out = os.path.join(output_dir, "latent_similarity.csv")
@@ -249,10 +288,30 @@ if __name__ == "__main__":
         "--pairwise", action="store_true",
         help="Also generate a pairwise cosine similarity heatmap of Stage 1 latents",
     )
+    parser.add_argument(
+        "--metadata",
+        default=str(DEFAULT_METADATA),
+        help="CSV with label + year for cohort filtering (default: mesh_traits.csv)",
+    )
+    parser.add_argument(
+        "--cultivar_csv",
+        default=None,
+        help="Optional CSV to merge missing metadata columns",
+    )
+    parser.add_argument(
+        "--year",
+        default="2023",
+        choices=("2023", "2025", "all"),
+        help="Keep only tubers from this cohort year (default: 2023)",
+    )
     args = parser.parse_args()
+    year = None if args.year == "all" else int(args.year)
     main(
         stage1_dir=args.stage1_latents,
         encoder_path=args.encoder_latents,
         output_dir=args.output,
         pairwise=args.pairwise,
+        metadata_csv=args.metadata,
+        cultivar_csv=args.cultivar_csv,
+        year=year,
     )
