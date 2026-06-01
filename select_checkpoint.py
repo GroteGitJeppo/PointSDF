@@ -38,7 +38,7 @@ from tqdm import tqdm
 
 from data.ply_index import load_ply_files
 from models import PointNetEncoder, SDFDecoder
-from utils import get_volume_coords, sdf2mesh
+from utils import get_volume_coords, resolve_hull_sdf_band, sdf2mesh
 from utils.grid_bbox import resolve_inference_grid_bbox
 
 warnings.filterwarnings('ignore')
@@ -94,6 +94,7 @@ def evaluate_checkpoint(
     device,
     normalize_half_extent: float = 0.05,
     max_hull_points: int | None = None,
+    hull_sdf_band: float | None = None,
 ) -> tuple[float, float, float, int, int]:
     """
     Run the full pipeline on a list of PLY files and return volume metrics.
@@ -122,7 +123,12 @@ def evaluate_checkpoint(
         pred_sdf = decoder(decoder_input)
 
         try:
-            mesh = sdf2mesh(pred_sdf, grid_coords, max_hull_points=max_hull_points)
+            mesh = sdf2mesh(
+                pred_sdf,
+                grid_coords,
+                max_hull_points=max_hull_points,
+                hull_sdf_band=hull_sdf_band,
+            )
             if mesh.is_watertight():
                 pred_volume = mesh.get_volume() * 1e6      # m³ → mL
                 gt_volumes.append(gt_volume)
@@ -211,6 +217,15 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
     if max_hull_points is not None:
         max_hull_points = int(max_hull_points)
         print(f'Convex hull: max_hull_points={max_hull_points:,}')
+    hull_sdf_band_cells = cfg.get('hull_sdf_band_cells')
+    hull_sdf_band = resolve_hull_sdf_band(
+        grid_bbox, grid_resolution, hull_sdf_band_cells
+    )
+    if hull_sdf_band is not None:
+        print(
+            f'Convex hull: near-surface band '
+            f'(cells={hull_sdf_band_cells}, δ={hull_sdf_band:.5f} m)'
+        )
 
     # ----- Discover snapshots -----
     snapshots_dir = Path(run_dir) / 'snapshots'
@@ -246,6 +261,7 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
             num_points, grid_coords, pre_transform, device,
             normalize_half_extent=normalize_half_extent,
             max_hull_points=max_hull_points,
+            hull_sdf_band=hull_sdf_band,
         )
 
         results.append({

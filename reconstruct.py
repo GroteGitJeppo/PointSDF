@@ -49,7 +49,7 @@ from tqdm import tqdm
 from data.sdf_samples import resolve_samples_npz
 from models.decoder import Decoder
 from models import SDFDecoder
-from utils import decode_sdf_hierarchical, get_volume_coords, sdf2mesh
+from utils import decode_sdf_hierarchical, get_volume_coords, resolve_hull_sdf_band, sdf2mesh
 from metrics_3d.chamfer_distance import ChamferDistance
 
 MODEL_PARAMS_SUBDIR = "ModelParameters"
@@ -206,6 +206,7 @@ def _chamfer_for_latent(
     max_fine_queries: int | None = None,
     decode_chunk: int = 131072,
     stagger_xy: bool = False,
+    hull_sdf_band: float | None = None,
 ) -> float | None:
     """
     Compute corepp-compatible Chamfer distance for one shape given its latent.
@@ -248,7 +249,7 @@ def _chamfer_for_latent(
             pred_sdf = decoder(net_in)
 
     try:
-        mesh = sdf2mesh(pred_sdf, grid_coords)
+        mesh = sdf2mesh(pred_sdf, grid_coords, hull_sdf_band=hull_sdf_band)
     except (ValueError, RuntimeError) as e:
         logging.debug("    %s: mesh extraction failed: %s", label, e)
         return None
@@ -360,6 +361,20 @@ def _run_checkpoint(
                 mfq = cfg.get("max_fine_queries", None)
                 if mfq is not None:
                     mfq = int(mfq)
+                grid_res = int(cfg.get("grid_resolution", 64))
+                hier = bool(cfg.get("hierarchical_decode", False))
+                coarse_res = int(cfg.get("coarse_resolution", 16))
+                fine_sub = int(cfg.get("fine_subdiv", 4))
+                eff_res = (
+                    (coarse_res - 1) * fine_sub + 1
+                    if hier
+                    else grid_res
+                )
+                hull_sdf_band = resolve_hull_sdf_band(
+                    clamp_dist * 1.5,
+                    eff_res,
+                    cfg.get("hull_sdf_band_cells"),
+                )
                 cd = _chamfer_for_latent(
                     latent=latent,
                     decoder=decoder,
@@ -367,14 +382,15 @@ def _run_checkpoint(
                     gt_pcd_dir=gt_pcd_dir,
                     label=label,
                     ply_pattern=ply_pattern,
-                    grid_resolution=int(cfg.get("grid_resolution", 64)),
-                    hierarchical_decode=bool(cfg.get("hierarchical_decode", False)),
-                    coarse_resolution=int(cfg.get("coarse_resolution", 16)),
-                    fine_subdiv=int(cfg.get("fine_subdiv", 4)),
+                    grid_resolution=grid_res,
+                    hierarchical_decode=hier,
+                    coarse_resolution=coarse_res,
+                    fine_subdiv=fine_sub,
                     surface_dilation=int(cfg.get("surface_dilation", 1)),
                     max_fine_queries=mfq,
                     decode_chunk=int(cfg.get("hierarchical_decode_chunk", 131072)),
                     stagger_xy=bool(cfg.get("grid_stagger_xy", False)),
+                    hull_sdf_band=hull_sdf_band,
                 )
                 if cd is not None:
                     chamfer_vals.append(cd)

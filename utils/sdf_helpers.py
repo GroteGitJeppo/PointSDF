@@ -47,19 +47,32 @@ def get_volume_coords(
     return coords
 
 
+def resolve_hull_sdf_band(
+    grid_bbox: float,
+    grid_resolution: int,
+    hull_sdf_band_cells: int | None,
+) -> float | None:
+    """Return band half-width in metres, or None if band filtering is disabled."""
+    if hull_sdf_band_cells is None:
+        return None
+    cell = (2.0 * float(grid_bbox)) / max(int(grid_resolution) - 1, 1)
+    return float(hull_sdf_band_cells) * cell
+
+
 def sdf2mesh(
     pred_sdf: torch.Tensor,
     grid_points: torch.Tensor,
     t: float = 0.0,
     max_hull_points: int | None = None,
+    hull_sdf_band: float | None = None,
 ):
     """
     Extract a watertight mesh from SDF predictions using convex hull.
     Convex-hull mesh extraction used in this repo for volume estimation.
 
-    Strategy: keep all grid points where SDF <= t (predicted interior + surface), then
-    compute the convex hull.  If the result is not watertight, iteratively
-    voxel-downsample until it is.
+    Strategy: keep grid points where SDF <= t (optionally only a near-surface
+    band with SDF >= -hull_sdf_band), then compute the convex hull.  If the
+    result is not watertight, iteratively voxel-downsample until it is.
 
     Args:
         pred_sdf:    (N,) or (N, 1) SDF values on CUDA
@@ -67,6 +80,8 @@ def sdf2mesh(
         t:           threshold (default 0.0)
         max_hull_points: if set, randomly subsample interior points to this
             count before hull (speed vs accuracy trade-off; None = use all)
+        hull_sdf_band: if set, keep only points with SDF >= -hull_sdf_band
+            (metres); None = full interior (SDF <= t only)
 
     Returns:
         mesh: open3d.geometry.TriangleMesh (watertight, on CPU)
@@ -77,6 +92,8 @@ def sdf2mesh(
     """
     pred_sdf = pred_sdf.squeeze()
     keep_idx = torch.le(pred_sdf, t)
+    if hull_sdf_band is not None:
+        keep_idx = keep_idx & torch.ge(pred_sdf, -hull_sdf_band)
     keep_points = grid_points[keep_idx].contiguous()
 
     n_keep = keep_points.shape[0]

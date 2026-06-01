@@ -427,6 +427,7 @@ Tables list **keys and roles**. Numeric defaults change during tuning — **alwa
 | `grid_resolution` | `32` | Uniform grid side length (`32³` queries) |
 | `grid_bbox` | *(yaml)* | Half-extent of SDF bbox (m); typically matches `normalize_half_extent` |
 | `hierarchical_decode` | `false` | Coarse-to-fine decode in test/select |
+| `hull_sdf_band_cells` | `2` | Near-surface hull band in grid cells (`null` = full interior) |
 | `max_hull_points` | `2048` | Cap interior points for convex hull |
 | `results_dir` | `results` | `test.py` CSV output directory |
 | `gt_pcd_dir` | `data/3DPotatoTwin/2_sfm/2_pcd` | GT mesh for Chamfer / P&R |

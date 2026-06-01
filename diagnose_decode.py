@@ -29,7 +29,7 @@ from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_err
 from tqdm import tqdm
 
 from models import SDFDecoder
-from utils import get_volume_coords, sdf2mesh
+from utils import get_volume_coords, resolve_hull_sdf_band, sdf2mesh
 
 warnings.filterwarnings("ignore")
 
@@ -77,6 +77,15 @@ def main(cfg: dict, split: str) -> None:
         f"SDF grid: {grid_resolution}³ = {grid_coords.size(0):,} points"
         f"  bbox=±{grid_bbox} m  stagger_xy={grid_stagger_xy}{center_str}"
     )
+    hull_sdf_band_cells = cfg.get("hull_sdf_band_cells")
+    hull_sdf_band = resolve_hull_sdf_band(
+        grid_bbox, grid_resolution, hull_sdf_band_cells
+    )
+    if hull_sdf_band is not None:
+        print(
+            f"Convex hull: near-surface band "
+            f"(cells={hull_sdf_band_cells}, δ={hull_sdf_band:.5f} m)"
+        )
 
     latent_dir = Path(cfg["latent_dir"])
     print(f"Latent dir: {latent_dir}")
@@ -126,7 +135,7 @@ def main(cfg: dict, split: str) -> None:
             pred_sdf = decoder(decoder_input)
 
             try:
-                mesh = sdf2mesh(pred_sdf, grid_coords)
+                mesh = sdf2mesh(pred_sdf, grid_coords, hull_sdf_band=hull_sdf_band)
                 if mesh.is_watertight():
                     pred_vols.append(mesh.get_volume() * 1e6)
                     gt_vols.append(float(gt_df.loc[label, volume_col]))

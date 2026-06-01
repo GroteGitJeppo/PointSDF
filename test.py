@@ -51,7 +51,7 @@ from tqdm import tqdm
 
 from data.ply_index import load_ply_files
 from models import PointNetEncoder, SDFDecoder
-from utils import decode_sdf_hierarchical, get_volume_coords, sdf2mesh
+from utils import decode_sdf_hierarchical, get_volume_coords, resolve_hull_sdf_band, sdf2mesh
 from utils.grid_bbox import resolve_inference_grid_bbox
 from metrics_3d.chamfer_distance import ChamferDistance
 from metrics_3d.precision_recall import PrecisionRecall
@@ -263,6 +263,7 @@ def main(cfg: dict, checkpoint_path: str):
     max_hull_points = cfg.get('max_hull_points', None)
     if max_hull_points is not None:
         max_hull_points = int(max_hull_points)
+    hull_sdf_band_cells = cfg.get('hull_sdf_band_cells')
 
     grid_center = torch.tensor(
         cfg.get('grid_center', [0.0, 0.0, 0.0]), dtype=torch.float, device=device
@@ -293,6 +294,15 @@ def main(cfg: dict, checkpoint_path: str):
         print(
             f'SDF grid: {grid_resolution}³ = {grid_coords.size(0):,} points  '
             f'bbox=±{grid_bbox}m  stagger_xy={grid_stagger_xy}{center_str}'
+        )
+
+    hull_sdf_band = resolve_hull_sdf_band(
+        grid_bbox, effective_resolution, hull_sdf_band_cells
+    )
+    if hull_sdf_band is not None:
+        print(
+            f'Convex hull: near-surface band '
+            f'(cells={hull_sdf_band_cells}, δ={hull_sdf_band:.5f} m)'
         )
 
     # GT point clouds for corepp-compatible Chamfer / P&R
@@ -394,7 +404,12 @@ def main(cfg: dict, checkpoint_path: str):
 
             t_hull0 = timeit.default_timer()
             try:
-                mesh = sdf2mesh(pred_sdf, grid_coords, max_hull_points=max_hull_points)
+                mesh = sdf2mesh(
+                    pred_sdf,
+                    grid_coords,
+                    max_hull_points=max_hull_points,
+                    hull_sdf_band=hull_sdf_band,
+                )
                 if mesh.is_watertight():
                     pred_volume = round(mesh.get_volume() * 1e6, 2)  # m³ → mL
                 # Translate mesh back to the origin so that Chamfer comparison

@@ -57,6 +57,16 @@ def configure_thesis_fonts() -> str:
         return "Fallback serif (install MiKTeX + newpx for exact Palatino match)"
 
 
+def plotly_fonts() -> dict[str, str | int]:
+    """Font sizes aligned with configure_thesis_fonts (Palatino / serif stack)."""
+    return {
+        "family": "Palatino Linotype, Palatino, TeX Gyre Pagella, Times New Roman, serif",
+        "title_size": 25,
+        "label_size": 15,
+        "tick_size": 12,
+    }
+
+
 def save_thesis_pdf(fig: plt.Figure, path: str | Path) -> None:
     """Save vector PDF suitable for \\includegraphics in LaTeX."""
     path = Path(path)

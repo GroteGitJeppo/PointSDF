@@ -112,6 +112,10 @@ surface_dilation: 1
 max_fine_queries: null
 hierarchical_decode_chunk: 131072
 
+# Near-surface band for convex hull: keep SDF in [-cells*cell, 0].
+# null = full interior (legacy); 2 = ~2 voxel layers.
+hull_sdf_band_cells: 2
+
 # Cap interior points passed to convex hull (test.py / select_checkpoint.py).
 # null = use all SDF<=0 grid points; lower values speed up hull at some volume cost.
 max_hull_points: null
