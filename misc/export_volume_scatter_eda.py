@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Export eda.ipynb mean-volume scatter figures (2nd code cell) as thesis PDFs.
 
-Writes four single-panel PDFs (subset/full × primary/mean CSV), without plot titles
-(use LaTeX subcaptions). Same cohort colours, regression line, y=x reference, and
-per-row axis limits as misc/eda.ipynb.
+Writes six single-panel PDFs without plot titles (use LaTeX subcaptions):
+four for the eda subset/full layout (2023 + volume-matched 2025 vs all years), plus
+two for 2023-only primary and secondary CSVs. Same cohort colours, regression line,
+y=x reference, and shared axis limits per row/pair as misc/eda.ipynb.
 Styling matches misc/export_latent_pca_thesis.py (thesis_style).
 
 Usage (from PointSDF_2/ or misc/):
@@ -32,6 +33,7 @@ from corepp_metrics import (
     apply_eda_2025_subset,
     attach_cohort_group,
     default_data_root,
+    ensure_year_column,
     load_results_csv,
     mean_volume_per_potato,
     subset_analysis_frames,
@@ -162,6 +164,40 @@ def build_mean_volume_frames(
     return mean1, mean2, full1, full2, _cohort_order(mean1), _cohort_order(full1)
 
 
+def build_mean_volume_year(
+    csv_path: Path,
+    csv_mean_path: Path,
+    *,
+    year: int = 2023,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """Mean per tuber for one cohort year only; intersect tubers across both CSVs."""
+    frames_primary = ensure_year_column(load_results_csv(csv_path))
+    frames_mean = ensure_year_column(load_results_csv(csv_mean_path))
+    frames_primary = frames_primary.loc[frames_primary["year"] == year]
+    frames_mean = frames_mean.loc[frames_mean["year"] == year]
+
+    mean1 = attach_cohort_group(mean_volume_per_potato(frames_primary))
+    mean2 = attach_cohort_group(mean_volume_per_potato(frames_mean))
+    mean1, mean2 = _intersect_tubers(mean1, mean2)
+    return mean1, mean2, _cohort_order(mean1)
+
+
+def _save_panel(
+    out_dir: Path,
+    fname: str,
+    df: pd.DataFrame,
+    groups: list[str],
+    limits: tuple[float, float],
+) -> None:
+    colors = [CUSTOM_COLORS[i % len(CUSTOM_COLORS)] for i in range(len(groups))]
+    fig, ax = plt.subplots(figsize=(7.5, 7.0), constrained_layout=True)
+    _scatter_panel(ax, df, groups, colors, limits)
+    path = out_dir / fname
+    save_thesis_pdf(fig, path)
+    plt.close(fig)
+    print(f"Saved {path.resolve()}")
+
+
 def plot_volume_scatter_2x2(
     mean1: pd.DataFrame,
     mean2: pd.DataFrame,
@@ -223,19 +259,33 @@ def save_volume_scatter_panels(
         ("volume_mean_scatter_full_mean.pdf", full2, groups_full, bot_limits),
     ]
     for fname, df, grp, limits in panels:
-        colors = [CUSTOM_COLORS[i % len(CUSTOM_COLORS)] for i in range(len(grp))]
-        fig, ax = plt.subplots(figsize=(7.5, 7.0), constrained_layout=True)
-        _scatter_panel(ax, df, grp, colors, limits)
-        path = out_dir / fname
-        save_thesis_pdf(fig, path)
-        plt.close(fig)
-        print(f"Saved {path.resolve()}")
+        _save_panel(out_dir, fname, df, grp, limits)
+
+
+def save_volume_scatter_year_pair(
+    out_dir: Path,
+    mean1: pd.DataFrame,
+    mean2: pd.DataFrame,
+    groups: list[str],
+    *,
+    year: int,
+) -> None:
+    limits = _axis_limits(
+        mean1["gt_volume_ml"],
+        mean1["pred_volume_ml"],
+        mean2["gt_volume_ml"],
+        mean2["pred_volume_ml"],
+    )
+    stem = f"volume_mean_scatter_{year}"
+    _save_panel(out_dir, f"{stem}_primary.pdf", mean1, groups, limits)
+    _save_panel(out_dir, f"{stem}_mean.pdf", mean2, groups, limits)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Export misc/eda.ipynb mean-volume GT vs pred scatter plots as four PDFs. "
+            "Export misc/eda.ipynb mean-volume GT vs pred scatter plots as PDFs "
+            "(four subset/full panels plus two 2023-only panels). "
             "Default 2025 subsample matches eda.ipynb / report_metrics --match-2025."
         )
     )
@@ -274,6 +324,17 @@ def main() -> None:
         action="store_true",
         help="Also write a single 2×2 PDF (volume_mean_scatter_2x2.pdf)",
     )
+    parser.add_argument(
+        "--skip-2023-only",
+        action="store_true",
+        help="Do not write the two 2023-only panels (primary + secondary CSV)",
+    )
+    parser.add_argument(
+        "--year-only",
+        type=int,
+        default=2023,
+        help="Cohort year for the extra pair of panels (default: 2023)",
+    )
     args = parser.parse_args()
 
     data_root = args.data_root or default_data_root()
@@ -302,6 +363,18 @@ def main() -> None:
     save_volume_scatter_panels(
         out_dir, mean1, mean2, full1, full2, groups, groups_full
     )
+
+    if not args.skip_2023_only:
+        yr1, yr2, groups_yr = build_mean_volume_year(
+            csv_path, csv_mean_path, year=args.year_only
+        )
+        print(
+            f"{args.year_only} only tubers (intersection): {len(yr1)}  |  "
+            f"groups: {', '.join(groups_yr)}"
+        )
+        save_volume_scatter_year_pair(
+            out_dir, yr1, yr2, groups_yr, year=args.year_only
+        )
 
     if args.combined:
         fig = plot_volume_scatter_2x2(
