@@ -30,7 +30,7 @@ dependencies:
   - tqdm
   - pyyaml
 
-  # ── Open3D via conda-forge (CPU-only build; CUDA not required — hull runs on CPU) ─
+  # ── Open3D (CUDA build on server for GPU convex hull in sdf2mesh) ─
   # pip open3d wheels are unavailable on this cluster (no PyPI access).
   # Convex hull in sdf2mesh uses all interior grid points
   - conda-forge::open3d>=0.18
