@@ -17,7 +17,7 @@ MARKER = dict(size=1.8, opacity=0.45, line=dict(width=0))
 # Closer camera → larger 3D scene inside each subplot (smaller eye = nearer).
 DEFAULT_CAMERA = dict(eye=dict(x=1.5, y=1.5, z=1))
 VIEW_RANGE_PAD_FRAC = 0.24
-EXPORT_MARGINS = dict(l=52, r=52, t=74, b=58)
+EXPORT_MARGINS = dict(l=52, r=52, t=28, b=58)
 # 1x4 strip: moderate canvas so each panel is not oversized in the PDF (see --scale).
 FIGURE_WIDTH = 2800
 FIGURE_HEIGHT = 600
@@ -300,7 +300,6 @@ def build_encoder_preprocessing_figure(
         rows=1,
         cols=4,
         specs=[[{"type": "scatter3d"}] * 4],
-        subplot_titles=[s[0] for s in stages],
         horizontal_spacing=(
             horizontal_spacing if horizontal_spacing is not None else HORIZONTAL_SPACING
         ),
@@ -325,7 +324,7 @@ def build_encoder_preprocessing_figure(
         width=width if width is not None else FIGURE_WIDTH,
         margin=EXPORT_MARGINS,
     )
-    _apply_thesis_plotly_layout(fig)
+    _apply_thesis_plotly_layout(fig, panel_titles=False)
     stats["ply_path"] = str(ply_path)
     return fig, stats
 
@@ -349,23 +348,6 @@ def build_single_stage_figure(
         height=height,
         margin=EXPORT_MARGINS,
         scene=_scene_axis(xr, yr, zr, fonts),
-        annotations=[
-            dict(
-                text=title,
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=1.02,
-                xanchor="center",
-                yanchor="bottom",
-                showarrow=False,
-                font=dict(
-                    family=fonts["family"],
-                    size=fonts["title_size"],
-                    color="black",
-                ),
-            ),
-        ],
     )
     _apply_thesis_plotly_layout(fig, panel_titles=False)
     return fig

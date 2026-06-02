@@ -11,7 +11,14 @@ Requires: pip install plotly kaleido open3d pyyaml
 
 Usage (from PointSDF_2/, one line — PowerShell does not use bash \\ continuations):
 
-    python misc/export_encoder_preprocessing_pdf.py --ply misc/reviewdata/R9-9_pcd_365.ply -o misc/encoder_preprocessing.pdf --html
+    python misc/export_encoder_preprocessing_pdf.py --ply misc/reviewdata/R9-9_pcd_365.ply -o misc/encoder_preprocessing.pdf --separate
+
+Separate PDFs (default stem encoder_preprocessing):
+
+    misc/encoder_preprocessing_1_raw.pdf
+    misc/encoder_preprocessing_2_centered.pdf
+    misc/encoder_preprocessing_3_normalized.pdf
+    misc/encoder_preprocessing_4_subsampled.pdf
 """
 
 from __future__ import annotations
@@ -36,6 +43,12 @@ DEFAULT_CONFIG = REPO_ROOT / "configs" / "train_encoder.yaml"
 DEFAULT_PLY = MISC_DIR / "reviewdata/R9-9_pcd_365.ply"
 DEFAULT_OUTPUT = MISC_DIR / "encoder_preprocessing.pdf"
 DEFAULT_HTML = MISC_DIR / "encoder_preprocessing.html"
+
+STAGE_PDF_SLUGS = ("1_raw", "2_centered", "3_normalized", "4_subsampled")
+
+
+def _stage_pdf_path(output: Path, slug: str) -> Path:
+    return output.parent / f"{output.stem}_{slug}{output.suffix}"
 
 
 def _write_pdf(fig, path: Path, *, scale: int) -> None:
@@ -73,6 +86,28 @@ def _write_pdf_one_panel_per_page(
         append_images=pages[1:],
         resolution=150.0,
     )
+
+
+def _write_separate_pdfs(
+    stages: list,
+    output: Path,
+    *,
+    scale: int,
+    figure_width: int | None,
+    figure_height: int | None,
+) -> list[Path]:
+    paths: list[Path] = []
+    for stage, slug in zip(stages, STAGE_PDF_SLUGS):
+        path = _stage_pdf_path(output, slug)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig = build_single_stage_figure(
+            stage,
+            width=figure_width if figure_width is not None else 820,
+            height=figure_height if figure_height is not None else 720,
+        )
+        _write_pdf(fig, path, scale=scale)
+        paths.append(path)
+    return paths
 
 
 def main() -> None:
@@ -151,10 +186,19 @@ def main() -> None:
         default=None,
         help="Gap between panels as fraction of figure width (default: minimal)",
     )
-    parser.add_argument(
+    export_group = parser.add_mutually_exclusive_group()
+    export_group.add_argument(
         "--one-panel-per-page",
         action="store_true",
-        help="PDF with four pages (one stage each) instead of one combined figure",
+        help="Single PDF with four pages (one stage per page)",
+    )
+    export_group.add_argument(
+        "--separate",
+        action="store_true",
+        help=(
+            "Write four PDF files (one stage each), e.g. "
+            "encoder_preprocessing_1_raw.pdf … _4_subsampled.pdf"
+        ),
     )
     args = parser.parse_args()
 
@@ -189,7 +233,17 @@ def main() -> None:
     out_pdf = Path(args.output).resolve()
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
 
-    if args.one_panel_per_page:
+    if args.separate:
+        paths = _write_separate_pdfs(
+            stages,
+            out_pdf,
+            scale=args.scale,
+            figure_width=args.figure_width,
+            figure_height=args.figure_height,
+        )
+        for path in paths:
+            print(f"Saved PDF: {path}")
+    elif args.one_panel_per_page:
         _write_pdf_one_panel_per_page(stages, out_pdf, scale=args.scale)
         print(f"Saved PDF (4 pages): {out_pdf}")
     else:

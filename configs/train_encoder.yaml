@@ -118,7 +118,7 @@ hull_sdf_band_cells: null
 
 # Cap interior points passed to convex hull (test.py / select_checkpoint.py).
 # null = use all SDF<=0 grid points; lower values speed up hull at some volume cost.
-max_hull_points: 4096
+max_hull_points: 1024
 
 # ---- Evaluation ----------------
 # Directory containing one sub-folder per label, each holding the
