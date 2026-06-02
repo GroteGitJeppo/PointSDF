@@ -143,59 +143,60 @@ def _allocate_bin_counts(ref_counts: pd.Series, n_total: int) -> pd.Series:
     return targets
 
 
-def select_2025_matched_ids(
-    df: pd.DataFrame,
-    data_root: Path,
+def load_eda_trait_meta(data_root: Path) -> pd.DataFrame:
+    """``mesh_traits.csv`` merged with ``splits.csv``; ``gt_volume_ml`` in mL."""
+    traits = pd.read_csv(data_root / "mesh_traits.csv")
+    splits = pd.read_csv(data_root / "splits.csv")
+    drop_cols = [c for c in ("split",) if c in traits.columns]
+    meta = splits.merge(traits.drop(columns=drop_cols), on="label", how="left")
+    meta["gt_volume_ml"] = pd.to_numeric(meta["volume (cm3)"], errors="coerce")
+    meta["year"] = pd.to_numeric(meta["year"], errors="coerce")
+    return meta
+
+
+def eda_train_2023(meta: pd.DataFrame) -> pd.DataFrame:
+    trait_subset = ["gt_volume_ml", *TRAIT_BOUND_COLS]
+    return meta[(meta["split"] == "train") & (meta["year"] == 2023)].dropna(subset=trait_subset)
+
+
+def eda_2025_test_full(meta: pd.DataFrame) -> pd.DataFrame:
+    """All 2025 test-split tubers from ``splits.csv`` (no trait-bound filter)."""
+    pool = meta[(meta["split"] == "test") & (meta["year"] == 2025)].copy()
+    pool["unique_id"] = pool["label"].astype(str)
+    return pool.dropna(subset=["gt_volume_ml", *TRAIT_BOUND_COLS])
+
+
+def eda_2025_test_pool(meta: pd.DataFrame, train_2023: pd.DataFrame) -> pd.DataFrame:
+    """2025 test tubers trait-filtered to 2023 train bounds (pool for volume matching)."""
+    return _filter_pool_to_2023_train_trait_bounds(
+        eda_2025_test_full(meta), train_2023, id_col="unique_id"
+    )
+
+
+def select_2025_matched_from_pool(
+    pot_2025: pd.DataFrame,
+    train_2023: pd.DataFrame,
     *,
+    id_col: str = "unique_id",
+    vol_col: str = "gt_volume_ml",
     bin_width_ml: float = EDA_MATCH_BIN_WIDTH_ML,
     match_seed: int = EDA_MATCH_SEED,
     min_train_per_bin: int = EDA_MIN_TRAIN_PER_BIN,
     target_match_n: int = EDA_TARGET_MATCH_N,
     max_oversample_ratio: float = EDA_MAX_OVERSAMPLE_RATIO,
 ) -> list[str]:
-    """Same 2025 tuber subsample as misc/eda.ipynb (volume bins + 2023 trait bounds)."""
-    traits = pd.read_csv(data_root / "mesh_traits.csv")
-    splits = pd.read_csv(data_root / "splits.csv")
-    meta = splits.merge(traits, on="label", how="left")
-    meta["gt_volume_ml"] = pd.to_numeric(meta["volume (cm3)"], errors="coerce")
-
-    trait_subset = ["gt_volume_ml", *TRAIT_BOUND_COLS]
-    train_2023 = meta[
-        (meta["split"] == "train") & (meta["year"] == 2023)
-    ].dropna(subset=trait_subset)
-
-    df = ensure_year_column(_normalize_columns(df))
-    pot_2025 = (
-        df.loc[df["year"] == 2025]
-        .groupby("unique_id", as_index=False)
-        .agg(gt_volume_ml=("gt_volume_ml", "first"))
-    )
-    trait_by_label = meta.drop_duplicates("label").set_index("label")[list(TRAIT_BOUND_COLS)]
-    pot_2025 = pot_2025.merge(
-        trait_by_label,
-        left_on="unique_id",
-        right_index=True,
-        how="left",
-    )
-    n_pool_before = len(pot_2025)
-    pot_2025 = _filter_pool_to_2023_train_trait_bounds(pot_2025, train_2023)
-    if len(pot_2025) < n_pool_before:
-        print(
-            f"  2025 trait filter (within 2023 train {list(TRAIT_BOUND_COLS)}): "
-            f"{len(pot_2025)}/{n_pool_before} tubers"
-        )
-
+    """Volume-matched subsample from a pre-filtered 2025 pool (misc/eda.ipynb logic)."""
     vols_ref = pd.concat(
-        [train_2023["gt_volume_ml"], pot_2025["gt_volume_ml"]],
+        [train_2023[vol_col], pot_2025[vol_col]],
         ignore_index=True,
     )
     bin_edges = _volume_bin_edges(vols_ref, bin_width_ml)
-    train_bins = _assign_bins(train_2023["gt_volume_ml"], bin_edges)
+    train_bins = _assign_bins(train_2023[vol_col], bin_edges)
     ref_counts = train_bins.value_counts().sort_index()
 
     rng = np.random.default_rng(match_seed)
     pool = pot_2025.copy()
-    pool["_bin"] = _assign_bins(pool["gt_volume_ml"], bin_edges)
+    pool["_bin"] = _assign_bins(pool[vol_col], bin_edges)
 
     ref_supported = ref_counts[ref_counts >= min_train_per_bin]
     pool = pool[pool["_bin"].isin(ref_supported.index)]
@@ -210,7 +211,7 @@ def select_2025_matched_ids(
     for b, n_take in targets.items():
         if n_take <= 0:
             continue
-        ids = pool.loc[pool["_bin"] == b, "unique_id"].unique()
+        ids = pool.loc[pool["_bin"] == b, id_col].unique()
         n_take = min(n_take, len(ids))
         if n_take == len(ids):
             selected.extend(ids.tolist())
@@ -218,6 +219,79 @@ def select_2025_matched_ids(
             selected.extend(rng.choice(ids, size=n_take, replace=False).tolist())
 
     return selected
+
+
+def select_2025_matched_ids_from_data(
+    data_root: Path,
+    *,
+    bin_width_ml: float = EDA_MATCH_BIN_WIDTH_ML,
+    match_seed: int = EDA_MATCH_SEED,
+    min_train_per_bin: int = EDA_MIN_TRAIN_PER_BIN,
+    target_match_n: int = EDA_TARGET_MATCH_N,
+    max_oversample_ratio: float = EDA_MAX_OVERSAMPLE_RATIO,
+) -> list[str]:
+    """2025 subsample from ``mesh_traits`` + ``splits`` only (no results CSV)."""
+    meta = load_eda_trait_meta(data_root)
+    train_2023 = eda_train_2023(meta)
+    pot_2025 = eda_2025_test_pool(meta, train_2023)
+    return select_2025_matched_from_pool(
+        pot_2025,
+        train_2023,
+        bin_width_ml=bin_width_ml,
+        match_seed=match_seed,
+        min_train_per_bin=min_train_per_bin,
+        target_match_n=target_match_n,
+        max_oversample_ratio=max_oversample_ratio,
+    )
+
+
+def select_2025_matched_ids(
+    df: pd.DataFrame,
+    data_root: Path,
+    *,
+    bin_width_ml: float = EDA_MATCH_BIN_WIDTH_ML,
+    match_seed: int = EDA_MATCH_SEED,
+    min_train_per_bin: int = EDA_MIN_TRAIN_PER_BIN,
+    target_match_n: int = EDA_TARGET_MATCH_N,
+    max_oversample_ratio: float = EDA_MAX_OVERSAMPLE_RATIO,
+) -> list[str]:
+    """Same subsample as ``select_2025_matched_ids_from_data`` but pool = 2025 tubers in *df*."""
+    meta = load_eda_trait_meta(data_root)
+    train_2023 = eda_train_2023(meta)
+    trait_by_label = meta.drop_duplicates("label").set_index("label")[list(TRAIT_BOUND_COLS)]
+
+    df = ensure_year_column(_normalize_columns(df))
+    vol_by_label = meta.set_index("label")["gt_volume_ml"]
+    pot_2025 = df.loc[df["year"] == 2025, ["unique_id"]].drop_duplicates().copy()
+    if "gt_volume_ml" in df.columns:
+        first_vol = df.loc[df["year"] == 2025].groupby("unique_id")["gt_volume_ml"].first()
+        pot_2025["gt_volume_ml"] = pot_2025["unique_id"].map(first_vol)
+    pot_2025["gt_volume_ml"] = pot_2025["gt_volume_ml"].fillna(
+        pot_2025["unique_id"].map(vol_by_label)
+    )
+    pot_2025 = pot_2025.merge(
+        trait_by_label,
+        left_on="unique_id",
+        right_index=True,
+        how="left",
+    )
+    n_pool_before = len(pot_2025)
+    pot_2025 = _filter_pool_to_2023_train_trait_bounds(pot_2025, train_2023)
+    if len(pot_2025) < n_pool_before:
+        print(
+            f"  2025 trait filter (within 2023 train {list(TRAIT_BOUND_COLS)}): "
+            f"{len(pot_2025)}/{n_pool_before} tubers"
+        )
+
+    return select_2025_matched_from_pool(
+        pot_2025,
+        train_2023,
+        bin_width_ml=bin_width_ml,
+        match_seed=match_seed,
+        min_train_per_bin=min_train_per_bin,
+        target_match_n=target_match_n,
+        max_oversample_ratio=max_oversample_ratio,
+    )
 
 
 def apply_eda_2025_subset(

@@ -9,23 +9,64 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
+from scipy.stats import gaussian_kde
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from corepp_metrics import (
     COHORT_GROUPS,
+    CONVEXITY_COL,
+    EDA_MATCH_BIN_WIDTH_ML,
+    EDA_MATCH_SEED,
+    EDA_MAX_OVERSAMPLE_RATIO,
+    EDA_MIN_TRAIN_PER_BIN,
+    EDA_TARGET_MATCH_N,
+    SPHERICITY_COL,
+    TRAIT_BOUND_COLS,
     apply_eda_2025_subset,
     attach_cohort_group,
     default_data_root,
     ensure_year_column,
     load_results_csv,
     mean_volume_per_potato,
+    eda_2025_test_full,
+    eda_2025_test_pool,
+    eda_train_2023,
+    select_2025_matched_from_pool,
     subset_analysis_frames,
+    _volume_bin_edges,
 )
 
 CUSTOM_COLORS = ["#e67e22", "#3498db", "#27ae60", "#9b59b6"]
 GROUPS = list(COHORT_GROUPS)
 PALETTE = ["#E07B39", "#3A7EC9", "#3AB55C", "#9B59B6"]
+
+# Three cohorts: 2023 train, 2025 test (full), 2025 subsample (trait + volume matched).
+# Draw back-to-front so the 2023 reference curve stays visible on top.
+VOLUME_BIN_DIST_SERIES: tuple[tuple[str, str, str], ...] = (
+    ("test_2025_full", "#E07B39", "2025 test (full)"),
+    ("test_2025_matched", "#3AB55C", "2025 subsample (trait + volume matched)"),
+    ("train_2023", "#3A7EC9", "2023 train"),
+)
+
+
+GT_VOLUME_SOURCES = {
+    "mesh_traits": ("mesh_traits.csv", "volume (cm3)"),
+    "ground_truth": ("ground_truth.csv", "volume_ml"),
+}
+
+
+@dataclass
+class CohortDistributionComparison:
+    """Binned tables + per-tuber values for 2023 train, 2025 full test, matched subsample."""
+
+    volume: pd.DataFrame
+    sphericity: pd.DataFrame
+    convexity: pd.DataFrame
+    raw: dict[str, dict[str, np.ndarray]]
+    counts: dict[str, int]
+    bin_width_ml: float
+    trait_bin_width: float
 
 
 @dataclass
@@ -867,6 +908,307 @@ def plot_error_vs_size_bins(ctx: EdaPlotContext) -> list[plt.Figure]:
         )
         figs.append(fig)
     return figs
+
+
+def load_gt_meta(data_root: Path, source: str = "mesh_traits") -> pd.DataFrame:
+    """Merge splits with GT traits; ``gt_volume_ml`` in mL (matches misc/eda.ipynb)."""
+    if source not in GT_VOLUME_SOURCES:
+        raise ValueError(f"gt source must be one of {list(GT_VOLUME_SOURCES)}; got {source!r}")
+    gt_name, vol_col = GT_VOLUME_SOURCES[source]
+    gt = pd.read_csv(data_root / gt_name)
+    splits = pd.read_csv(data_root / "splits.csv")
+    drop_cols = [c for c in ("split",) if c in gt.columns]
+    meta = splits.merge(gt.drop(columns=drop_cols), on="label", how="left")
+    meta["gt_volume_ml"] = pd.to_numeric(meta[vol_col], errors="coerce")
+    if "year" in meta.columns:
+        meta["year"] = pd.to_numeric(meta["year"], errors="coerce")
+    else:
+        meta["year"] = pd.to_numeric(
+            meta["label"].astype(str).str.extract(r"^(\d{4})-")[0],
+            errors="coerce",
+        )
+    return meta
+
+
+def _bin_label(lo: float, hi: float, decimals: int) -> str:
+    if decimals <= 0:
+        return f"{lo:.0f}-{hi:.0f}"
+    return f"{lo:.{decimals}f}-{hi:.{decimals}f}"
+
+
+def _rel_bin_hist(
+    values: pd.Series,
+    bin_edges: np.ndarray,
+    *,
+    label_decimals: int = 0,
+) -> pd.Series:
+    counts = pd.cut(values, bins=bin_edges, right=False, include_lowest=True).value_counts()
+    counts = counts.sort_index()
+    total = float(counts.sum())
+    if total <= 0:
+        return pd.Series(dtype=float)
+    props = counts / total
+    return props.rename(
+        lambda iv: _bin_label(float(iv.left), float(iv.right), label_decimals)
+    )
+
+
+def _comparison_table(
+    cohort_2023: pd.DataFrame,
+    cohort_2025_full: pd.DataFrame,
+    cohort_2025_matched: pd.DataFrame,
+    metric_col: str,
+    bin_edges: np.ndarray,
+    *,
+    label_decimals: int = 0,
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "train_2023": _rel_bin_hist(
+                cohort_2023[metric_col], bin_edges, label_decimals=label_decimals
+            ),
+            "test_2025_full": _rel_bin_hist(
+                cohort_2025_full[metric_col], bin_edges, label_decimals=label_decimals
+            ),
+            "test_2025_matched": _rel_bin_hist(
+                cohort_2025_matched[metric_col], bin_edges, label_decimals=label_decimals
+            ),
+        }
+    ).fillna(0.0)
+
+
+def _cohort_raw_series(
+    cohort_2023: pd.DataFrame,
+    cohort_2025_full: pd.DataFrame,
+    cohort_2025_matched: pd.DataFrame,
+    metric_col: str,
+) -> dict[str, np.ndarray]:
+    return {
+        "train_2023": cohort_2023[metric_col].dropna().to_numpy(dtype=float),
+        "test_2025_full": cohort_2025_full[metric_col].dropna().to_numpy(dtype=float),
+        "test_2025_matched": cohort_2025_matched[metric_col].dropna().to_numpy(dtype=float),
+    }
+
+
+def build_cohort_distribution_comparison(
+    data_root: Path,
+    *,
+    gt_volume_source: str = "mesh_traits",
+    bin_width_ml: float = EDA_MATCH_BIN_WIDTH_ML,
+    trait_bin_width: float = 0.02,
+    match_seed: int = EDA_MATCH_SEED,
+    min_train_per_bin: int = EDA_MIN_TRAIN_PER_BIN,
+    target_match_n: int = EDA_TARGET_MATCH_N,
+    max_oversample_ratio: float = EDA_MAX_OVERSAMPLE_RATIO,
+) -> CohortDistributionComparison:
+    """Volume / sphericity / convexity tables from mesh_traits + splits + eda subsample."""
+    meta = load_gt_meta(data_root, gt_volume_source)
+    train_2023 = eda_train_2023(meta)
+    pot_2025_full = eda_2025_test_full(meta)
+    pot_2025_pool = eda_2025_test_pool(meta, train_2023)
+
+    selected_ids = select_2025_matched_from_pool(
+        pot_2025_pool,
+        train_2023,
+        bin_width_ml=bin_width_ml,
+        match_seed=match_seed,
+        min_train_per_bin=min_train_per_bin,
+        target_match_n=target_match_n,
+        max_oversample_ratio=max_oversample_ratio,
+    )
+    pot_2025_matched = pot_2025_pool[pot_2025_pool["unique_id"].isin(selected_ids)]
+
+    vol_edges = _volume_bin_edges(
+        pd.concat(
+            [
+                train_2023["gt_volume_ml"],
+                pot_2025_full["gt_volume_ml"],
+                pot_2025_matched["gt_volume_ml"],
+            ],
+            ignore_index=True,
+        ),
+        bin_width_ml,
+    )
+    sph_edges = _volume_bin_edges(
+        pd.concat(
+            [
+                train_2023[SPHERICITY_COL],
+                pot_2025_full[SPHERICITY_COL],
+                pot_2025_matched[SPHERICITY_COL],
+            ],
+            ignore_index=True,
+        ),
+        trait_bin_width,
+    )
+    conv_edges = _volume_bin_edges(
+        pd.concat(
+            [
+                train_2023[CONVEXITY_COL],
+                pot_2025_full[CONVEXITY_COL],
+                pot_2025_matched[CONVEXITY_COL],
+            ],
+            ignore_index=True,
+        ),
+        trait_bin_width,
+    )
+
+    return CohortDistributionComparison(
+        volume=_comparison_table(
+            train_2023,
+            pot_2025_full,
+            pot_2025_matched,
+            "gt_volume_ml",
+            vol_edges,
+            label_decimals=0,
+        ),
+        sphericity=_comparison_table(
+            train_2023,
+            pot_2025_full,
+            pot_2025_matched,
+            SPHERICITY_COL,
+            sph_edges,
+            label_decimals=3,
+        ),
+        convexity=_comparison_table(
+            train_2023,
+            pot_2025_full,
+            pot_2025_matched,
+            CONVEXITY_COL,
+            conv_edges,
+            label_decimals=3,
+        ),
+        raw={
+            "volume": _cohort_raw_series(
+                train_2023, pot_2025_full, pot_2025_matched, "gt_volume_ml"
+            ),
+            "sphericity": _cohort_raw_series(
+                train_2023, pot_2025_full, pot_2025_matched, SPHERICITY_COL
+            ),
+            "convexity": _cohort_raw_series(
+                train_2023, pot_2025_full, pot_2025_matched, CONVEXITY_COL
+            ),
+        },
+        counts={
+            "train_2023": len(train_2023),
+            "test_2025_full": len(pot_2025_full),
+            "test_2025_matched": len(pot_2025_matched),
+        },
+        bin_width_ml=bin_width_ml,
+        trait_bin_width=trait_bin_width,
+    )
+
+
+def _kde_density(values: np.ndarray, x_grid: np.ndarray) -> np.ndarray | None:
+    """Gaussian KDE density on *x_grid*; ``None`` if too few finite samples."""
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if len(vals) < 2:
+        return None
+    if np.std(vals) < 1e-12:
+        return None
+    return gaussian_kde(vals)(x_grid)
+
+
+def plot_cohort_distribution_kde(
+    series_by_cohort: dict[str, np.ndarray],
+    *,
+    xlabel: str,
+    title: str,
+    counts: dict[str, int] | None = None,
+    x_min: float | None = None,
+    n_grid: int = 400,
+    fill_alpha: float = 0.35,
+) -> plt.Figure:
+    """Overlaid KDE curves (CoRe++-style smooth densities, one row per tuber)."""
+    fig, ax = plt.subplots(figsize=(6.5, 6.5), constrained_layout=True)
+
+    pooled: list[np.ndarray] = []
+    for values in series_by_cohort.values():
+        vals = np.asarray(values, dtype=float)
+        pooled.append(vals[np.isfinite(vals)])
+    if not pooled or not any(len(v) for v in pooled):
+        ax.set_title(title, pad=10)
+        return fig
+
+    all_vals = np.concatenate([v for v in pooled if len(v)])
+    lo = float(np.nanmin(all_vals)) if x_min is None else float(x_min)
+    hi = float(np.nanmax(all_vals))
+    pad = 0.04 * (hi - lo) if hi > lo else 0.04
+    x_grid = np.linspace(lo, hi + pad, n_grid)
+
+    ymax = 0.0
+    for col, color, label_base in VOLUME_BIN_DIST_SERIES:
+        if col not in series_by_cohort:
+            continue
+        density = _kde_density(series_by_cohort[col], x_grid)
+        if density is None:
+            continue
+        ymax = max(ymax, float(np.max(density)))
+        n_suffix = f" (n={counts[col]})" if counts and col in counts else ""
+        ax.fill_between(x_grid, density, color=color, alpha=fill_alpha, linewidth=0)
+        ax.plot(
+            x_grid,
+            density,
+            color=color,
+            lw=2.0,
+            alpha=0.95,
+            label=f"{label_base}{n_suffix}",
+        )
+
+    ax.set_xlabel(xlabel, labelpad=6)
+    ax.set_ylabel("")
+    ax.set_title(title, pad=10)
+    ax.set_xlim(lo, hi + pad)
+    ax.set_ylim(0.0, ymax * 1.08 if ymax > 0 else 1.0)
+    ax.yaxis.grid(True, alpha=0.25)
+    ax.set_axisbelow(True)
+    ax.legend(loc="upper right", fontsize=9, framealpha=0.92)
+    return fig
+
+
+def plot_volume_bin_distribution_overlay(
+    comparison: CohortDistributionComparison,
+    *,
+    counts: dict[str, int] | None = None,
+    title: str = "Ground-truth volume distribution",
+) -> plt.Figure:
+    return plot_cohort_distribution_kde(
+        comparison.raw["volume"],
+        xlabel="Volume (mL)",
+        title=title,
+        counts=counts or comparison.counts,
+        x_min=0.0,
+    )
+
+
+def plot_sphericity_distribution_overlay(
+    comparison: CohortDistributionComparison,
+    *,
+    counts: dict[str, int] | None = None,
+    title: str = "Sphericity distribution",
+) -> plt.Figure:
+    return plot_cohort_distribution_kde(
+        comparison.raw["sphericity"],
+        xlabel="Sphericity",
+        title=title,
+        counts=counts or comparison.counts,
+        x_min=None,
+    )
+
+
+def plot_convexity_distribution_overlay(
+    comparison: CohortDistributionComparison,
+    *,
+    counts: dict[str, int] | None = None,
+    title: str = "Convexity distribution",
+) -> plt.Figure:
+    return plot_cohort_distribution_kde(
+        comparison.raw["convexity"],
+        xlabel="Convexity",
+        title=title,
+        counts=counts or comparison.counts,
+        x_min=None,
+    )
 
 
 def all_eda_figures(

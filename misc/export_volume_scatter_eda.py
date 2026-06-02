@@ -9,8 +9,8 @@ Styling matches misc/export_latent_pca_thesis.py (thesis_style).
 
 Usage (from PointSDF_2/ or misc/):
     python misc/export_volume_scatter_eda.py \\
-        --csv misc/results/test_results_32_all.csv \\
-        --csv-mean misc/results/corepp_all_32.csv \\
+        --csv results/46943_16_t01_06_225655.csv \\
+        --csv-mean results/corepp_all_32.csv \\
         --output misc/thesis_figures
 """
 
