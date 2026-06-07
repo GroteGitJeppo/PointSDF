@@ -140,7 +140,7 @@ delta_rep:          0.5       # margin for repulsion hinge loss
 
 # ---- Inference / test settings -----------------------------
 grid_resolution: 20          # matches corepp super3d_32.json (grid_density)
-grid_bbox:       auto        # per-split global half-extent from gt_pcd_dir (CoRe++ find_global_bbox)
+grid_bbox:       0.05        # per-split global half-extent from gt_pcd_dir (CoRe++ find_global_bbox)
 grid_stagger_xy: true         # CoRe++ Grid3D generate_point_from_bbox stagger
 
 # ---- Hierarchical decode (test.py) -----------------------------
