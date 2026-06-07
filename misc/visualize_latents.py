@@ -11,6 +11,7 @@ Loads either:
 Produces PNG figures per run:
   - pca_cultivar.png      — PCA 2-D, points coloured by cultivar
   - pca_volume.png        — PCA 2-D, points coloured by ground-truth volume
+  - pc1_vs_volume.png     — PC1 vs ground-truth volume (Pearson r)
   - pca_sphericity.png    — PCA 2-D, trait coloured (global spectrum scale)
   - pca_convexity.png     — PCA 2-D, trait coloured (global spectrum scale)
   - pca_aspect_ratio.png  — PCA 2-D, trait coloured (global spectrum scale)
@@ -315,6 +316,51 @@ def _volume_colors(labels: list[str], meta: pd.DataFrame | None, volume_col: str
     return vols, "viridis", volume_col
 
 
+def _pearson_r(x: np.ndarray, y: np.ndarray) -> tuple[float, int]:
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    if len(x) < 2:
+        return float("nan"), len(x)
+    return float(np.corrcoef(x, y)[0, 1]), len(x)
+
+
+def _plot_pc1_vs_volume(
+    ax: plt.Axes,
+    pc1: np.ndarray,
+    volumes: np.ndarray,
+    *,
+    title: str,
+    pc1_label: str = "PC1",
+    volume_label: str = "Volume (mL)",
+    marker_size: float = 18,
+    alpha: float = 0.75,
+) -> float:
+    mask = np.isfinite(pc1) & np.isfinite(volumes)
+    pc1_m = pc1[mask]
+    vol_m = volumes[mask]
+    ax.scatter(
+        pc1_m, vol_m, s=marker_size, alpha=alpha, linewidths=0, c="#4c72b0"
+    )
+    r, n = _pearson_r(pc1_m, vol_m)
+    if len(pc1_m) >= 2 and np.std(pc1_m) > 0:
+        coef = np.polyfit(pc1_m, vol_m, 1)
+        xs = np.linspace(pc1_m.min(), pc1_m.max(), 100)
+        ax.plot(xs, np.polyval(coef, xs), "--", color="#c44e52", linewidth=1.5, alpha=0.85)
+    ax.set_xlabel(pc1_label)
+    ax.set_ylabel(volume_label)
+    ax.set_title(title)
+    if np.isfinite(r):
+        ax.text(
+            0.03, 0.97,
+            f"Pearson r = {r:.3f}  (n = {n})",
+            transform=ax.transAxes,
+            va="top",
+            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
+        )
+    return r
+
+
 def _trait_values(
     labels: list[str], meta: pd.DataFrame | None, trait_col: str
 ) -> np.ndarray | None:
@@ -495,6 +541,21 @@ def main(
         fig.savefig(out_path, dpi=150)
         plt.close(fig)
         print(f"  Saved {out_path}")
+
+        fig, ax = plt.subplots(figsize=(7, 6))
+        r = _plot_pc1_vs_volume(
+            ax,
+            Z_pca[:, 0],
+            v_vals,
+            title=f"PC1 vs volume ({volume_col})  (PC1 {explained[0]:.1f}%)",
+            pc1_label=f"PC1 ({explained[0]:.1f}% var.)",
+            volume_label=f"{volume_col} (mL)",
+        )
+        out_path = os.path.join(output_dir, "pc1_vs_volume.png")
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=150)
+        plt.close(fig)
+        print(f"  Saved {out_path}  (Pearson r = {r:.3f})")
     else:
         print("  Skipping pca_volume.png (no volume data found)")
 

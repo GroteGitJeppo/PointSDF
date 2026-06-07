@@ -4,7 +4,7 @@
 Fits one PCA on the combined Stage~1 + encoder latent matrix so all panels
 share the same PC axes and limits. Outputs cultivar, volume, sphericity,
 convexity, aspect ratio, and volume/surface ratio colourings (decoder + encoder
-each). Trait colour
+each). Also PC1 vs volume scatter plots with Pearson r. Trait colour
 scales use global min/max from metadata with a dark purple→red spectrum colormap.
 By default encoder
 latents are averaged per tuber (one point per tuber, like Stage~1).
@@ -42,6 +42,7 @@ from thesis_style import configure_thesis_fonts, save_thesis_pdf
 from visualize_latents import (
     _cultivar_colors,
     _merge_cultivar,
+    _plot_pc1_vs_volume,
     _trait_colors,
     _trait_range,
     _volume_colors,
@@ -297,6 +298,40 @@ def _save_pca_trait(
     save_thesis_pdf(fig, out_path)
     plt.close(fig)
     print(f"  Saved {out_path}")
+
+
+def _save_pc1_vs_volume(
+    Z_pca: np.ndarray,
+    labels: list[str],
+    meta: pd.DataFrame | None,
+    volume_col: str,
+    explained: np.ndarray,
+    out_path: Path,
+    *,
+    title: str,
+    subtitle: str,
+    marker_size: float,
+    alpha: float,
+) -> None:
+    v_vals, _, _ = _volume_colors(labels, meta, volume_col)
+    if v_vals is None or np.all(np.isnan(v_vals)):
+        print(f"  Skipping {out_path.name} (no volume metadata)")
+        return
+    fig, ax = plt.subplots(figsize=(5.5, 4.5), constrained_layout=True)
+    r = _plot_pc1_vs_volume(
+        ax,
+        Z_pca[:, 0],
+        v_vals,
+        title=f"{title}\n{subtitle}",
+        pc1_label=_pc_axis_label(1, explained[0]),
+        volume_label="Volume (mL)",
+        marker_size=marker_size,
+        alpha=alpha,
+    )
+    ax.grid(True, alpha=0.3)
+    save_thesis_pdf(fig, out_path)
+    plt.close(fig)
+    print(f"  Saved {out_path}  (Pearson r = {r:.3f})")
 
 
 def _global_volume_range(
@@ -598,6 +633,30 @@ def main() -> None:
         vol_vmin=vol_vmin,
         vol_vmax=vol_vmax,
         vol_cmap=vol_cmap,
+    )
+    _save_pc1_vs_volume(
+        Z_dec_pca,
+        labels_dec,
+        meta,
+        args.volume_col,
+        explained,
+        out_dir / "latent_pc1_decoder_volume.pdf",
+        title="Stage 1 reconstruct latents",
+        subtitle=dec_sub,
+        marker_size=dec_marker,
+        alpha=dec_alpha,
+    )
+    _save_pc1_vs_volume(
+        Z_enc_pca,
+        labels_enc,
+        meta,
+        args.volume_col,
+        explained,
+        out_dir / "latent_pc1_encoder_volume.pdf",
+        title="Encoder latents",
+        subtitle=enc_sub,
+        marker_size=enc_marker,
+        alpha=enc_alpha_vol,
     )
     _save_pca_cultivar(
         Z_dec_pca,
