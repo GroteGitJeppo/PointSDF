@@ -45,19 +45,21 @@ class VTR_encoder(nn.Module):
         """points_xyz: (B, N, 3) -> equivariant global features (B, 1024, 3)."""
         points_fts = points_xyz.permute(0, 2, 1).contiguous().unsqueeze(1)
 
-        group_xyz_1, group_fts_1, _, _ = self.grouper_l1(points_xyz, points_fts)
+        centers_xyz = points_xyz
+
+        group_xyz_1, group_fts_1, centers_xyz, _ = self.grouper_l1(centers_xyz, points_fts)
         group_fts_1 = self.vn_1(group_fts_1)
         mean_fts_1 = self.pool1(group_fts_1)
 
-        group_xyz_2, group_fts_2, _, _ = self.grouper_l2(points_xyz, mean_fts_1)
+        group_xyz_2, group_fts_2, centers_xyz, _ = self.grouper_l2(centers_xyz, mean_fts_1)
         group_fts_2 = self.vn_2(group_fts_2)
         mean_fts_2 = self.pool2(group_fts_2)
 
-        group_xyz_3, group_fts_3, _, _ = self.grouper_l3(points_xyz, mean_fts_2)
+        group_xyz_3, group_fts_3, centers_xyz, _ = self.grouper_l3(centers_xyz, mean_fts_2)
         group_fts_3 = self.vn_3(group_fts_3)
         mean_fts_3 = self.pool3(group_fts_3)
 
-        group_xyz_4, group_fts_4, _, _ = self.grouper_l4(points_xyz, mean_fts_3)
+        group_xyz_4, group_fts_4, centers_xyz, _ = self.grouper_l4(centers_xyz, mean_fts_3)
         group_fts_4 = self.vn_4(group_fts_4)
         mean_fts_4 = self.pool4(group_fts_4)
 

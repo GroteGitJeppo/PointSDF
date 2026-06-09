@@ -52,5 +52,12 @@ def fps_downsample(
     points_xyz: torch.Tensor, points_fts: torch.Tensor, k: int
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Single FPS pass; subsample both xyz and vn features with the same indices."""
+    n_xyz = points_xyz.shape[1]
+    n_fts = points_fts.shape[-1]
+    if n_xyz != n_fts:
+        raise ValueError(
+            f'fps_downsample: points_xyz ({n_xyz}) and points_fts ({n_fts}) '
+            'must be aligned'
+        )
     local_idx = fps_local_indices(points_xyz, k)
     return gather_xyz(points_xyz, local_idx), gather_vn_feats(points_fts, local_idx)

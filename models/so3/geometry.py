@@ -19,6 +19,11 @@ class get_local_area_new(nn.Module):
 
     def forward(self, points_xyz, points_fts):
         b, dim_fts, _, n = points_fts.size()
+        if points_xyz.shape[1] != n:
+            raise ValueError(
+                f'points_xyz ({points_xyz.shape[1]}) and points_fts ({n}) '
+                'must have the same number of points'
+            )
         if self.npoint == n:
             new_xyz = points_xyz
             new_fts = points_fts

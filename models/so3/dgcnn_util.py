@@ -46,6 +46,12 @@ def get_graph_feature_xyz_new(xyz, fts, new, k=20, query='xyz', idx=None):
     b = xyz.shape[0]
     n = xyz.shape[1]
     dim_fts = fts.shape[1]
+    n_fts = fts.shape[-1]
+    if n != n_fts:
+        raise ValueError(
+            f'get_graph_feature_xyz_new: xyz ({n}) and fts ({n_fts}) '
+            'must have the same number of points'
+        )
     xyz = xyz.permute(0, 2, 1).contiguous()
     fts = fts.reshape(b, dim_fts * 3, n)
     npoint = new.shape[-1] if query == 'fts' else new.shape[1]
