@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from models.so3 import dgcnn_util
-from utils.so3_sampling import fps_gather_vn_feats, fps_gather_xyz
+from utils.so3_sampling import fps_downsample
 
 
 class get_local_area_new(nn.Module):
@@ -23,8 +23,7 @@ class get_local_area_new(nn.Module):
             new_xyz = points_xyz
             new_fts = points_fts
         elif self.npoint < n:
-            new_xyz = fps_gather_xyz(points_xyz, self.npoint)
-            new_fts = fps_gather_vn_feats(points_fts, self.npoint)
+            new_xyz, new_fts = fps_downsample(points_xyz, points_fts, self.npoint)
         else:
             raise ValueError('Sample too many points')
 
