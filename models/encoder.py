@@ -44,9 +44,10 @@ class PointNetEncoder(torch.nn.Module):
       SA2  r=0.02 m — medium neighbourhood covering most of the potato
       SA3  GlobalSA — full-shape aggregation
 
-    The per-cloud scale ratio (original_half_extent / 0.05) is concatenated to
-    the 1024-dim global feature before the latent head so that the encoder can
-    recover metric size information lost during normalisation.
+    The per-cloud scale ratio cubed (original_half_extent / 0.05)³ is
+    concatenated to the 1024-dim global feature before the latent head so
+    that the encoder can recover metric volume information lost during
+    normalisation.
     """
 
     def __init__(self, latent_size: int = 32):
@@ -58,7 +59,7 @@ class PointNetEncoder(torch.nn.Module):
         self.sa3_module = GlobalSAModule(MLP([256 + 3, 256, 512, 1024]))
 
         self.latent_head = nn.Sequential(
-            nn.Linear(1025, 512),   # 1024 global features + 1 scale scalar
+            nn.Linear(1025, 512),   # 1024 global features + scale³
             nn.BatchNorm1d(512),
             nn.LeakyReLU(0.2),
             nn.Dropout(0.4),
@@ -71,7 +72,7 @@ class PointNetEncoder(torch.nn.Module):
             data: PyG Data/Batch with:
                 data.pos   (N_total, 3)  — normalised, centred point coordinates
                 data.batch (N_total,)    — batch index per point
-                data.scale (B, 1) or (B,) — per-cloud scale ratio
+                data.scale (B, 1) or (B,) — per-cloud linear scale ratio (cubed before concat)
         Returns:
             latent: (B, latent_size)
         """
@@ -80,6 +81,6 @@ class PointNetEncoder(torch.nn.Module):
         sa2_out = self.sa2_module(*sa1_out)
         sa3_out = self.sa3_module(*sa2_out)
         x, _, _ = sa3_out                          # (B, 1024)
-        scale = data.scale.view(-1, 1)             # (B, 1)
+        scale = data.scale.view(-1, 1).pow(3)      # (B, 1) volume-like scale
         x = torch.cat([x, scale], dim=1)           # (B, 1025)
         return self.latent_head(x)
