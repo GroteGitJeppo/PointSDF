@@ -8,19 +8,19 @@ class vtr_encoder:
     class group_2:
         group_type = 'knn'
         query = 'fts'
-        npoint = 1024
+        npoint = 512
         nsample = 16
 
     class group_3:
         group_type = 'knn'
         query = 'fts'
-        npoint = 1024
+        npoint = 256
         nsample = 16
 
     class group_4:
         group_type = 'knn'
         query = 'fts'
-        npoint = 1024
+        npoint = 128
         nsample = 8
 
     vn_1 = {'layers': [2, 32],

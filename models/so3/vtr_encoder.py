@@ -1,8 +1,19 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from models.so3 import transformer, vnnlayers
 from models.so3.geometry import get_local_area_new
+
+
+def _upsample_vn_feats(fts: torch.Tensor, target_n: int) -> torch.Tensor:
+    """Linearly upsample vector-neuron features (B, C, 3, N) to length target_n."""
+    b, c, _, n = fts.shape
+    if n == target_n:
+        return fts
+    x = fts.reshape(b, c * 3, n)
+    x = F.interpolate(x, size=target_n, mode='linear', align_corners=True)
+    return x.reshape(b, c, 3, target_n)
 
 
 class VTR_encoder(nn.Module):
@@ -28,6 +39,8 @@ class VTR_encoder(nn.Module):
         self.gl_maxpool = vnnlayers.VNMaxPool(vn_channels)
         self.gl_meanpool = vnnlayers.mean_pool()
 
+        self.fusion_npoint = hypers_encoder.group_1.npoint
+
     def forward(self, points_xyz):
         """points_xyz: (B, N, 3) -> equivariant global features (B, 1024, 3)."""
         points_fts = points_xyz.permute(0, 2, 1).contiguous().unsqueeze(1)
@@ -48,7 +61,13 @@ class VTR_encoder(nn.Module):
         group_fts_4 = self.vn_4(group_fts_4)
         mean_fts_4 = self.pool4(group_fts_4)
 
-        cat_fts = torch.cat((mean_fts_1, mean_fts_2, mean_fts_3, mean_fts_4), dim=1)
+        fusion_n = self.fusion_npoint
+        cat_fts = torch.cat((
+            _upsample_vn_feats(mean_fts_1, fusion_n),
+            _upsample_vn_feats(mean_fts_2, fusion_n),
+            _upsample_vn_feats(mean_fts_3, fusion_n),
+            _upsample_vn_feats(mean_fts_4, fusion_n),
+        ), dim=1)
         cat_fts = self.vn_5(cat_fts)
 
         cat_fts_max = self.gl_maxpool(cat_fts)

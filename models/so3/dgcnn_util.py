@@ -1,22 +1,45 @@
 import torch
+from torch_cluster import knn as tc_knn
+
+
+def _knn_indices(x: torch.Tensor, k: int, x_q: torch.Tensor | None = None) -> torch.Tensor:
+    """Return neighbor indices as (B, M, k) local indices into the N points of each batch item.
+
+    Args:
+        x: (B, D, N) search cloud
+        k: number of neighbors
+        x_q: optional (B, D, M) query cloud; self-knn when None
+    """
+    b, d, n = x.shape
+    device = x.device
+
+    x_flat = x.permute(0, 2, 1).reshape(b * n, d)
+    batch_x = torch.arange(b, device=device).repeat_interleave(n)
+
+    if x_q is None:
+        y_flat = x_flat
+        batch_y = batch_x
+        m = n
+    else:
+        m = x_q.shape[2]
+        y_flat = x_q.permute(0, 2, 1).reshape(b * m, d)
+        batch_y = torch.arange(b, device=device).repeat_interleave(m)
+
+    edge_index = tc_knn(x_flat, y_flat, k, batch_x=batch_x, batch_y=batch_y)
+    col = edge_index[1]
+    batch_col = batch_x[col]
+    local_x = col - batch_col * n
+    return local_x.view(b, m, k)
 
 
 def knn(x, k):
-    inner = -2 * torch.matmul(x.transpose(2, 1), x)
-    xx = torch.sum(x ** 2, dim=1, keepdim=True)
-    pairwise_distance = -xx - inner - xx.transpose(2, 1)
-    idx = pairwise_distance.topk(k=k, dim=-1, sorted=True)[1]
-    return idx
+    return _knn_indices(x, k)
 
 
 def knn_cross(x, k, x_q=None):
     if x_q is None:
         return knn(x, k)
-    inner = -2 * torch.matmul(x_q.transpose(2, 1), x)
-    xqxq = torch.sum(x_q ** 2, dim=1, keepdim=True)
-    xx = torch.sum(x ** 2, dim=1, keepdim=True)
-    pairwise_distance = -xx - inner - xqxq.transpose(2, 1)
-    return pairwise_distance.topk(k=k, dim=-1, sorted=True)[1]
+    return _knn_indices(x, k, x_q)
 
 
 def get_graph_feature_xyz_new(xyz, fts, new, k=20, query='xyz', idx=None):
