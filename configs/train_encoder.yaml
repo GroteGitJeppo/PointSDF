@@ -65,7 +65,7 @@ augmentation:
   rotate_z_deg:        180.0
   max_shear:           0.2
   shear_prob:          0
-  flip_x_prob:         0.50
+  flip_x_prob:         0
   scale_min:           1
   scale_max:           1
   point_dropout_prob:  0.4
