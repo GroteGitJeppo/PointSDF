@@ -50,7 +50,8 @@ from torch_geometric.typing import WITH_TORCH_CLUSTER
 from tqdm import tqdm
 
 from data.ply_index import load_ply_files
-from models import PointNetEncoder, SDFDecoder
+from models import SDFDecoder, build_encoder
+from utils.run_config import merge_config_from_checkpoint
 from utils import decode_sdf_hierarchical, get_volume_coords, resolve_hull_sdf_band, sdf2mesh
 from utils.grid_bbox import resolve_inference_grid_bbox
 from metrics_3d.chamfer_distance import ChamferDistance
@@ -187,13 +188,16 @@ def main(cfg: dict, checkpoint_path: str):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
 
+    cfg = merge_config_from_checkpoint(cfg, checkpoint_path)
+
     # ----- Load architecture config from the decoder config -----
     with open(cfg['decoder_config']) as f:
         decoder_cfg = yaml.safe_load(f)
     latent_size = decoder_cfg['latent_size']
 
     # ----- Load models -----
-    encoder = PointNetEncoder(latent_size=latent_size).to(device)
+    encoder = build_encoder(cfg, latent_size).to(device)
+    print(f'Encoder: {cfg.get("encoder", "pointnet")}')
     decoder = SDFDecoder(
         latent_size=latent_size,
         num_layers=decoder_cfg['num_layers'],

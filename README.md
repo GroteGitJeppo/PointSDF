@@ -209,6 +209,24 @@ Frozen Stage 1 decoder. Encoder trained with **MSE to target latents** + **laten
 python train.py --config configs/train_encoder.yaml
 ```
 
+Set `encoder: so3` in `configs/train_encoder.yaml` for the SO(3) VTR Vector Neuron backbone (default: `pointnet`). Test and `select_checkpoint.py` read the encoder type from the run's saved `config.yaml`. SO3 is heavier — reduce `batch_size` to `8` if you hit GPU OOM.
+
+**SO3 smoke test** (after `git pull`, from `PointSDF_2/`):
+
+```bash
+conda activate pointsdf
+python -c "
+import yaml, torch
+from torch_geometric.data import Data, Batch
+from models.build_encoder import build_encoder
+cfg = yaml.safe_load(open('configs/train_encoder.yaml'))
+cfg['encoder'] = 'so3'
+b = Batch.from_data_list([Data(pos=torch.randn(1024,3), scale=torch.tensor([1.0])) for _ in range(2)])
+enc = build_encoder(cfg, 32).cuda()
+print(enc(b.to('cuda')).shape)
+"
+```
+
 **CLI overrides** (handy for SLURM without editing YAML):
 
 ```
@@ -403,6 +421,8 @@ Tables list **keys and roles**. Numeric defaults change during tuning — **alwa
 
 | Key | Default | Role |
 |-----|---------|------|
+| `encoder` | `pointnet` | `pointnet` or `so3` (VTR Vector Neuron encoder) |
+| `so3.dropout` | `0.4` | Latent-head dropout when `encoder: so3` |
 | `data_root` | `data/3DPotatoTwin/1_rgbd/2_pcd` | Partial PLY root |
 | `splits_csv` | `data/3DPotatoTwin/splits.csv` | Splits |
 | `ply_index_csv` | `data/3DPotatoTwin/ply_index.csv` | Fast PLY index (optional) |

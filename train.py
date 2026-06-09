@@ -39,7 +39,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.typing import WITH_TORCH_CLUSTER
 
 from data.encoder_dataset import PointCloudLatentDataset, TuberBatchSampler
-from models import PointNetEncoder, SDFDecoder
+from models import SDFDecoder, build_encoder
 from utils.grid_bbox import resolve_inference_grid_bbox
 
 warnings.filterwarnings('ignore')
@@ -442,7 +442,8 @@ def main(cfg: dict):
     )
 
     # ----- Encoder -----
-    encoder = PointNetEncoder(latent_size=decoder_cfg['latent_size']).to(device)
+    encoder = build_encoder(cfg, decoder_cfg['latent_size']).to(device)
+    print(f'Encoder: {cfg.get("encoder", "pointnet")}')
 
     optimizer = optim.Adam(
         encoder.parameters(),

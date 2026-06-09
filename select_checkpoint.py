@@ -37,7 +37,8 @@ from torch_geometric.typing import WITH_TORCH_CLUSTER
 from tqdm import tqdm
 
 from data.ply_index import load_ply_files
-from models import PointNetEncoder, SDFDecoder
+from models import SDFDecoder, build_encoder
+from utils.run_config import load_merged_config
 from utils import get_volume_coords, resolve_hull_sdf_band, sdf2mesh
 from utils.grid_bbox import resolve_inference_grid_bbox
 
@@ -83,7 +84,7 @@ def process_ply(ply_path: str, num_points: int, pre_transform, device,
 
 @torch.no_grad()
 def evaluate_checkpoint(
-    encoder: PointNetEncoder,
+    encoder: torch.nn.Module,
     decoder: SDFDecoder,
     ply_files: list[str],
     gt_df: pd.DataFrame,
@@ -157,6 +158,8 @@ def evaluate_checkpoint(
 def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
+
+    cfg = load_merged_config(cfg, Path(run_dir))
 
     # ----- Architecture -----
     with open(cfg['decoder_config']) as f:
@@ -246,7 +249,8 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
           f'{snapshot_dirs[0].name}–{snapshot_dirs[-1].name}\n')
 
     # ----- Sweep -----
-    encoder = PointNetEncoder(latent_size=latent_size).to(device)
+    encoder = build_encoder(cfg, latent_size).to(device)
+    print(f'Encoder: {cfg.get("encoder", "pointnet")}')
     results: list[dict] = []
 
     for snap_dir in tqdm(snapshot_dirs, desc='snapshots', unit='epoch'):

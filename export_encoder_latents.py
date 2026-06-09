@@ -31,8 +31,9 @@ from torch_geometric.typing import WITH_TORCH_CLUSTER
 from tqdm import tqdm
 
 from data.ply_index import load_ply_files
-from models import PointNetEncoder
+from models import build_encoder
 from test import _encoder_run_name, process_ply
+from utils.run_config import merge_config_from_checkpoint
 
 if not WITH_TORCH_CLUSTER:
     raise SystemExit("This code requires 'torch-cluster'")
@@ -46,7 +47,7 @@ def _latent_output_dir(checkpoint_path: str, encoder_output_dir: str | None) -> 
 
 @torch.no_grad()
 def export_split(
-    encoder: PointNetEncoder,
+    encoder: torch.nn.Module,
     ply_files: list[str],
     num_points: int,
     pre_transform,
@@ -69,11 +70,14 @@ def main(cfg: dict, checkpoint_path: str, splits: list[str], merge: bool) -> Non
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
+    cfg = merge_config_from_checkpoint(cfg, checkpoint_path)
+
     with open(cfg["decoder_config"]) as f:
         decoder_cfg = yaml.safe_load(f)
     latent_size = decoder_cfg["latent_size"]
 
-    encoder = PointNetEncoder(latent_size=latent_size).to(device)
+    encoder = build_encoder(cfg, latent_size).to(device)
+    print(f'Encoder: {cfg.get("encoder", "pointnet")}')
     ckpt = torch.load(checkpoint_path, map_location=device)
     encoder.load_state_dict(ckpt["encoder_state_dict"])
     encoder.eval()

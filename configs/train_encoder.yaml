@@ -37,6 +37,12 @@ output_dir: weights/encoder
 # test.py writes: <results_dir>/<encoder_weight_dir>_<grid_resolution>_t<timestamp>.csv
 results_dir: results
 
+# ---- Encoder architecture ----------------------------------
+encoder: so3   # pointnet | so3
+so3:                # only used when encoder: so3
+  dropout: 0.4
+# SO3 runs may need batch_size: 8 if GPU OOM (default 16 is fine for pointnet).
+
 # ---- Encoder training --------------------------------------
 seed:              133
 epochs:            100
@@ -118,7 +124,7 @@ hull_sdf_band_cells: null
 
 # Cap interior points passed to convex hull (test.py / select_checkpoint.py).
 # null = use all SDF<=0 grid points; lower values speed up hull at some volume cost.
-max_hull_points: 1024
+max_hull_points: null
 
 # ---- Evaluation ----------------
 # Directory containing one sub-folder per label, each holding the
