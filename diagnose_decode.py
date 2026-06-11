@@ -5,14 +5,6 @@ Decode-step diagnostic.
 Bypasses the encoder and feeds Stage 1 ground-truth latent codes from
 ``latent_dir`` directly into the frozen decoder.  Measures volume RMSE / R².
 
-If results are good (RMSE ~22 mL or better on test):
-    → decode step (grid_center, grid_bbox, grid_resolution) is correct.
-    → the problem is entirely in the encoder; see encoder diagnostics next.
-
-If results are bad (RMSE >> 30 mL or R² < 0):
-    → decode step is broken regardless of encoder quality.
-    → fix grid_center / grid_bbox first before retraining.
-
 Usage (on server, from the PointSDF/ root):
     python misc/diagnose_decode.py --config configs/train_encoder.yaml [--split val]
 """

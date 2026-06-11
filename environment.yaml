@@ -10,8 +10,7 @@ dependencies:
 
   # ── C/C++ compiler ────────────────────────────────────────────────────────
   # Required to build pytorch_fpsample (and any other C++/OpenMP extension)
-  # from source. Not pre-installed on the GPU cluster; conda-forge ships a
-  # self-contained GCC toolchain that does not need sudo.
+  # from source.
   - conda-forge::gcc_linux-64   # sets CC / activates GCC in the env
   - conda-forge::gxx_linux-64   # sets CXX / activates G++ in the env
   - conda-forge::make
@@ -26,14 +25,13 @@ dependencies:
   - tqdm
   - pyyaml
 
-  # ── Open3D (CUDA build on server for GPU convex hull in sdf2mesh) ─
+  # ── Open3D ─
   - conda-forge::open3d>=0.18
 
   # ── pip-installed packages ─────────────────────────────────────────────────
   - pip
   - pip:
     # PyTorch 2.8.0 + CUDA 12.8
-    # Matches INSTALL.md: torch==2.8, torchvision==0.23.0, CUDA 12.8
     - --extra-index-url https://download.pytorch.org/whl/cu128
     - torch==2.8.0
     - torchvision==0.23.0
@@ -49,19 +47,11 @@ dependencies:
     - torch_spline_conv==1.2.2
 
     # Computer vision
-    # Matches INSTALL.md: opencv-python==4.12.0.88
     - opencv-python==4.12.0.88
-
-    # Hyperparameter search
-    # Matches INSTALL.md: optuna==4.6.0
-    - optuna==4.6.0
 
     # Mesh processing and SDF extraction (needed for DeepSDF data pipeline)
     - trimesh
     - point-cloud-utils   # pcu: signed_distance_to_mesh for SDF sample generation
-
-    # Experiment logging
-    - tensorboard
 
     # Pin build tools to versions compatible with pytorch_fpsample's setup.py.
     # setuptools>=80 removed pkg_resources from torch.utils.cpp_extension path;
@@ -70,5 +60,5 @@ dependencies:
     - "numpy<2"
 
     # NOTE: pytorch_fpsample must be installed manually after activating this
-    # environment. See INSTALL.md for instructions:
+    # environment.
     #   cd pytorch_fpsample && pip install --no-deps --no-build-isolation .

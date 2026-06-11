@@ -232,8 +232,6 @@ Requires `snapshot_frequency > 0` so Step 4b can sweep epoch snapshots.
 tensorboard --logdir weights/encoder/<run>
 ```
 
-Default encoder: `PointNetEncoder` in `models/encoder.py`. `encoder_v2.py` / `encoder_old.py` are alternates, not wired by default.
-
 ---
 
 ### Step 4b — Best encoder checkpoint (val volume RMSE) — required
@@ -340,8 +338,7 @@ PointSDF/
 │   ├── ply_index.py             # fast PLY lookup CSV
 │   └── merge_mesh_traits.py
 ├── models/
-│   ├── encoder.py               # PointNetEncoder (default)
-│   ├── encoder_v2.py / encoder_old.py
+│   ├── encoder.py               # PointNetEncoder
 │   ├── decoder.py               # SDFDecoder
 │   └── pointsdf.py              # encoder + decoder wrapper
 ├── metrics_3d/
