@@ -1,12 +1,10 @@
-# PointSDF_2 — 3D Shape Completion for Potato Tuber Volume Estimation
+# PointSDF — 3D Shape Completion for Potato Tuber Volume Estimation
 
-Encoder–decoder pipeline for estimating **potato tuber volume (mL)** from a single **partial point cloud** (conveyor RGB-D). A PointNet++ encoder predicts a DeepSDF latent code; a frozen MLP decoder evaluates an SDF on a 3D grid; volume comes from the **convex hull** of interior grid points (`SDF < 0`), following CoRe++.
-
-Forked from [PointRAFT](https://arxiv.org/abs/2512.24193); Stage 1 / reconstruction / metrics follow patterns from [CoRe++](https://doi.org/10.1016/j.compag.2024.109673). Sibling repos `DeepSDF/` and `corepp/` at the thesis workspace root are **read-only references** (see `../AGENTS.md`).
+Encoder–decoder pipeline for estimating **potato tuber volume (mL)** from a single **partial point cloud** (conveyor RGB-D). A PointNet++ encoder predicts a DeepSDF latent code; a frozen MLP decoder evaluates an SDF on a 3D grid; volume comes from the **convex hull** of interior grid points, following CoRe++.
 
 ```
 Partial point cloud (.ply, from conveyor belt)
- │  centre + isotropic normalise (normalize_half_extent in config)
+ │  centre + isotropic normalise
  ▼
 PointNet++ backbone (`models/encoder.py`)
  │  SA1 / SA2 / GlobalSA  →  pooled geometry feature (1024-D)
@@ -26,19 +24,15 @@ The per-cloud **scale ratio** is computed from the centred partial cloud (`data/
 
 **Training pipeline**
 
-1. **Stage 1** — autodecoder on complete-scan SDF samples: joint decoder + per-shape latents (frozen in this thesis — see `../AGENTS.md`).
+1. **Stage 1** — autodecoder on complete-scan SDF samples: joint decoder + per-shape latents
 2. **Reconstruct** — per-shape latent optimisation with frozen decoder; val Chamfer sweep picks checkpoint `E*`.
 3. **Stage 2** — train encoder on partial PLYs to match reconstructed latents; decoder frozen.
 4. **Select** — **always** run `select_checkpoint.py` after training; pick snapshot by **val volume RMSE** → `best_vol_<R>/checkpoint.pth`.
-5. **Test** — `test.py` on the selected checkpoint; report volume and optional shape metrics.
-
-> **Evaluation protocol:** 2025 data is a strict blind test set. Use train/val only for checkpoint and hyperparameter selection; do not tune on test metrics.
+5. **Test** — `test.py` on the selected checkpoint; report volume and shape metrics.
 
 ---
 
 ## Installation
-
-Runs on a remote Debian server with an NVIDIA A40 (CUDA). No sudo — use conda.
 
 ```bash
 conda env create -f environment.yaml
@@ -59,7 +53,7 @@ Dataset: [3DPotatoTwin](https://huggingface.co/datasets/UTokyo-FieldPhenomics-La
 
 **Ground-truth volumes** for training selection and `test.py` live in `data/3DPotatoTwin/mesh_traits.csv` (merge per-year files with `python data/merge_mesh_traits.py`). Column `volume (cm3)` equals mL. Optional cultivar metadata: `data/3DPotatoTwin/ground_truth.csv`. Train/val/test labels: `data/3DPotatoTwin/splits.csv`.
 
-**All commands below: run from `PointSDF_2/`.**
+**All commands below: run from `PointSDF/`.**
 
 ### Step 0a — SDF samples from complete meshes (Stage 1)
 
@@ -334,7 +328,7 @@ python test.py -c configs/train_encoder.yaml \
 ## Repository structure
 
 ```
-PointSDF_2/
+PointSDF/
 ├── configs/
 │   ├── train_deepsdf.yaml       # Stage 1
 │   └── train_encoder.yaml       # Stage 2 + inference
@@ -443,9 +437,9 @@ Tables list **keys and roles**. Numeric defaults change during tuning — **alwa
 | `E*` by val Chamfer | Reconstruction quality on held-out complete shapes peaks before overfitting train latents. |
 | Encoder checkpoint for eval | **Always** `select_checkpoint.py` after training → lowest **val volume RMSE** → `best_vol_<R>/`. `encoder.pth` is val latent MSE only. |
 | Convex hull volume | Potatoes are roughly convex; hull is fast, watertight, and matches CoRe++. |
-| Latent size 32, decoder width 512 | CoRe++ / DeepSDF defaults for this domain. |
-| Point clouds only (no RGB-D CNN) | Geometry-only input; no camera-specific encoder (PointRAFT height embedding removed). |
-| Raw **scale ratio** in latent head | Recovers metric size after normalisation; **`log(scale)` tried, raw scale worked best**; `pca_eigvals` ablated. |
+| Latent size 16 |
+| Point clouds only (no RGB-D CNN) | Geometry-only input; no camera-specific encoder |
+| Raw **scale ratio** in latent head |
 | Optional contrastive loss | AttRepLoss structures the latent space when enabled; off in the default config. |
 | `sdf_loss_weight: 0` default | Centered partial clouds vs uncentered Stage 1 decoder coords — enable only with aligned SDF samples. |
 
