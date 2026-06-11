@@ -2,6 +2,8 @@
 """Export matplotlib EDA figures from misc/eda.ipynb into one multi-page PDF.
 
 For encoder preprocessing Plotly 3D panels, use export_encoder_preprocessing_pdf.py.
+For per-frame volume-error and Chamfer histograms as separate thesis PDFs, use
+export_error_histograms_eda.py.
 
 Reproduces the notebook's static plots (volume scatter, relative error, GT
 distribution, train-coverage analysis, per-frame histograms, size-bin bars).

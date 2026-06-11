@@ -40,6 +40,14 @@ from corepp_metrics import (
 CUSTOM_COLORS = ["#e67e22", "#3498db", "#27ae60", "#9b59b6"]
 GROUPS = list(COHORT_GROUPS)
 PALETTE = ["#E07B39", "#3A7EC9", "#3AB55C", "#9B59B6"]
+HIST_N_BINS_VOLUME = 70
+HIST_N_BINS_CHAMFER = 35
+
+
+def histogram_n_bins(metric_col: str) -> int:
+    if metric_col == "vol_error":
+        return HIST_N_BINS_VOLUME
+    return HIST_N_BINS_CHAMFER
 
 # Three cohorts: 2023 train, 2025 test (full), 2025 subsample (trait + volume matched).
 # Draw back-to-front so the 2023 reference curve stays visible on top.
@@ -74,6 +82,7 @@ class EdaPlotContext:
     result_path: Path
     result_path_mean: Path
     df_frames: pd.DataFrame
+    df_frames_mean: pd.DataFrame
     df_mean1: pd.DataFrame
     df_mean2: pd.DataFrame
     df_full1: pd.DataFrame
@@ -264,6 +273,7 @@ def build_eda_context(
         result_path=result_path,
         result_path_mean=result_path_mean,
         df_frames=df_frames,
+        df_frames_mean=df_frames_mean,
         df_mean1=df_mean1,
         df_mean2=df_mean2,
         df_full1=df_full1,
@@ -713,13 +723,75 @@ def _frames_with_groups(df_frames: pd.DataFrame) -> pd.DataFrame:
     return df[df["group"].isin(GROUPS)]
 
 
-def _stacked_hist_by_group(ax, df: pd.DataFrame, metric_col: str, xlabel: str, zero_line: bool) -> None:
-    alpha = 0.88
-    n_bins = 35
-    all_vals = df[metric_col].dropna().values
-    lo = np.nanpercentile(all_vals, 1)
-    hi = np.nanpercentile(all_vals, 99)
+def _symmetric_x_range(lo: float, hi: float, center: float) -> tuple[float, float]:
+    """Expand [lo, hi] so the x-axis spans equally on both sides of center."""
+    half = max(center - lo, hi - center)
+    if half <= 0:
+        half = max(abs(lo - center), abs(hi - center), 1e-6) or 1.0
+    return center - half, center + half
+
+
+def shared_histogram_limits(
+    dfs: list[pd.DataFrame],
+    metric_col: str,
+    *,
+    n_bins: int = 35,
+    lo_pct: float = 1.0,
+    hi_pct: float = 99.0,
+    y_margin_frac: float = 0.05,
+    x_center: float | None = None,
+) -> tuple[np.ndarray, tuple[float, float]]:
+    """Shared x bins and y limits for comparable stacked histograms across runs."""
+    arrays = [
+        df.loc[df["group"].isin(GROUPS), metric_col].dropna().values
+        for df in dfs
+    ]
+    arrays = [a for a in arrays if len(a)]
+    if not arrays:
+        bins = np.linspace(-0.5, 0.5, n_bins + 1)
+        return bins, (0.0, 1.0)
+
+    all_vals = np.concatenate(arrays)
+    lo = float(np.nanpercentile(all_vals, lo_pct))
+    hi = float(np.nanpercentile(all_vals, hi_pct))
+    center = float(np.nanmean(all_vals)) if x_center is None else float(x_center)
+    lo, hi = _symmetric_x_range(lo, hi, center)
+    if hi <= lo:
+        hi = lo + 1.0
     bins = np.linspace(lo, hi, n_bins + 1)
+
+    max_count = 0.0
+    for df in dfs:
+        vals_list = [
+            df.loc[df["group"] == g, metric_col].dropna().values for g in GROUPS
+        ]
+        counts = np.array([np.histogram(v, bins=bins)[0] for v in vals_list], dtype=float)
+        max_count = max(max_count, float(counts.sum(axis=0).max()))
+    ymax = max_count * (1.0 + y_margin_frac) if max_count > 0 else 1.0
+    return bins, (0.0, ymax)
+
+
+def _stacked_hist_by_group(
+    ax,
+    df: pd.DataFrame,
+    metric_col: str,
+    xlabel: str,
+    zero_line: bool,
+    *,
+    bins: np.ndarray | None = None,
+    ylim: tuple[float, float] | None = None,
+    n_bins: int | None = None,
+) -> None:
+    alpha = 0.88
+    if n_bins is None:
+        n_bins = histogram_n_bins(metric_col)
+    all_vals = df[metric_col].dropna().values
+    if bins is None:
+        lo = np.nanpercentile(all_vals, 1)
+        hi = np.nanpercentile(all_vals, 99)
+        center = 0.0 if zero_line else float(np.nanmean(all_vals))
+        lo, hi = _symmetric_x_range(float(lo), float(hi), center)
+        bins = np.linspace(lo, hi, n_bins + 1)
     vals_list = [df.loc[df["group"] == g, metric_col].dropna().values for g in GROUPS]
     counts = np.array([np.histogram(v, bins=bins)[0] for v in vals_list], dtype=float)
     bottoms = np.zeros(len(bins) - 1)
@@ -735,11 +807,20 @@ def _stacked_hist_by_group(ax, df: pd.DataFrame, metric_col: str, xlabel: str, z
         bottoms += counts[i]
     if zero_line:
         ax.axvline(0, color="black", linestyle="--", lw=1.5, alpha=0.8)
-    med = np.nanmedian(all_vals)
-    ax.axvline(med, color="crimson", linestyle="-", lw=2.0, alpha=0.95,
-               label=f"overall median = {med:.2f}")
+    mean = float(np.nanmean(all_vals))
+    ax.axvline(
+        mean,
+        color="crimson",
+        linestyle="-",
+        lw=2.0,
+        alpha=0.95,
+        label=f"overall mean = {mean:.2f}",
+    )
     ax.set_xlabel(xlabel, labelpad=6)
     ax.set_ylabel("Count")
+    ax.set_xlim(float(bins[0]), float(bins[-1]))
+    if ylim is not None:
+        ax.set_ylim(*ylim)
     ax.yaxis.grid(True, alpha=0.3)
     ax.set_axisbelow(True)
     ax.legend(fontsize=9, framealpha=0.92)
@@ -774,7 +855,7 @@ def _vol_bin_edges(volumes: pd.Series, bin_width: float = 50) -> np.ndarray:
 
 def _stacked_hist_by_vol_bin(ax, df: pd.DataFrame, metric_col: str, xlabel: str, zero_line: bool) -> None:
     alpha = 0.88
-    n_bins = 35
+    n_bins = 50
     vol_bin_width = 50
     cmap = plt.cm.plasma
     sub = df.dropna(subset=[metric_col, "gt_volume_ml"]).copy()
