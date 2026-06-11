@@ -5,7 +5,7 @@ Merge mesh_traits_2023.csv and mesh_traits_2025.csv into mesh_traits.csv.
 Does not modify the source files. Adds column `year`. 2025 rows get empty
 group_id, bucket_id, pin_id.
 
-Usage (from PointSDF_2/):
+Usage (from PointSDF/):
     python data/merge_mesh_traits.py
 """
 

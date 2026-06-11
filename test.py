@@ -3,23 +3,21 @@ Stage 2 — encoder evaluation.
 
 Loads a trained encoder + decoder checkpoint, runs inference on the test
 split, extracts potato volume via convex hull of SDF interior points, and
-reports Chamfer distance, precision/recall/F1 (corepp-compatible) and
+reports Chamfer distance, precision/recall/F1 and
 MAE / RMSE / R² against ground-truth volumes.
 
-Metrics match corepp/test.py exactly:
+Metrics ported from corepp/test.py:
   - Chamfer: Open3D point-cloud distance, (mean(gt→pred) + mean(pred→gt)) / 2
   - Precision/Recall/F1: percentage of points within 5 mm (0.005 m) threshold
   - GT: complete laser/SfM PLY per tuber, centred to match encoder pre-transform
   - Per-label ``year`` (from ``target_csv``, e.g. mesh_traits) is printed in the per-year summary
 
-Timing (corepp-comparable):
-  - Per-row milliseconds with CUDA synchronization between GPU stages so splits are
-    meaningful on GPU (small overhead vs decode cost).
+Timing:
+  - Per-row milliseconds with CUDA synchronization between GPU stages.
   - encoder_ms, latent_save_ms, decoder_ms, convex_hull_ms segment the pipeline;
-    exec_time_ms is the wall time for that whole block (same components as before).
+    exec_time_ms is the wall time for that whole block.
   - Excludes PLY load + FPS (process_ply) and Chamfer / P&R.
-  - Printed aggregate exec stats exclude the first sample (CUDA warmup), matching
-    corepp's skip of the first iteration.
+  - Printed aggregate exec stats exclude the first sample (CUDA warmup).
 
 Usage:
     python test.py --config configs/train_encoder.yaml --checkpoint weights/encoder/<run>/checkpoint.pth
@@ -51,7 +49,7 @@ from tqdm import tqdm
 
 from data.ply_index import load_ply_files
 from models import PointNetEncoder, SDFDecoder
-from utils import decode_sdf_hierarchical, get_volume_coords, resolve_hull_sdf_band, sdf2mesh
+from utils import get_volume_coords, sdf2mesh
 from utils.grid_bbox import resolve_inference_grid_bbox
 from metrics_3d.chamfer_distance import ChamferDistance
 from metrics_3d.precision_recall import PrecisionRecall
@@ -187,12 +185,10 @@ def main(cfg: dict, checkpoint_path: str):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
 
-    # ----- Load architecture config from the decoder config -----
     with open(cfg['decoder_config']) as f:
         decoder_cfg = yaml.safe_load(f)
     latent_size = decoder_cfg['latent_size']
 
-    # ----- Load models -----
     encoder = PointNetEncoder(latent_size=latent_size).to(device)
     decoder = SDFDecoder(
         latent_size=latent_size,
@@ -208,7 +204,6 @@ def main(cfg: dict, checkpoint_path: str):
     decoder.eval()
     print(f'Loaded checkpoint from {checkpoint_path}')
 
-    # ----- Dataset paths -----
     splits_df = pd.read_csv(cfg['splits_csv'], delimiter=',')
     test_ids = set(splits_df.loc[splits_df['split'] == 'test', 'label'].astype(str))
 
@@ -224,7 +219,6 @@ def main(cfg: dict, checkpoint_path: str):
             if col not in gt_df.columns and col in meta_df.columns:
                 gt_df = gt_df.join(meta_df[[col]], how='left')
 
-    # ----- Year filter -----
     year_filter = cfg.get('_year_filter', 'all')
     if year_filter != 'all':
         if 'year' not in gt_df.columns:
@@ -252,18 +246,9 @@ def main(cfg: dict, checkpoint_path: str):
     grid_bbox = resolve_inference_grid_bbox(cfg, label_ids=test_ids)
     grid_stagger_xy = bool(cfg.get('grid_stagger_xy', False))
 
-    hierarchical_decode = bool(cfg.get('hierarchical_decode', False))
-    coarse_resolution = int(cfg.get('coarse_resolution', 16))
-    fine_subdiv = int(cfg.get('fine_subdiv', 4))
-    surface_dilation = int(cfg.get('surface_dilation', 1))
-    max_fine_queries = cfg.get('max_fine_queries', None)
-    if max_fine_queries is not None:
-        max_fine_queries = int(max_fine_queries)
-    decode_chunk = int(cfg.get('hierarchical_decode_chunk', 131072))
     max_hull_points = cfg.get('max_hull_points', None)
     if max_hull_points is not None:
         max_hull_points = int(max_hull_points)
-    hull_sdf_band_cells = cfg.get('hull_sdf_band_cells')
 
     grid_center = torch.tensor(
         cfg.get('grid_center', [0.0, 0.0, 0.0]), dtype=torch.float, device=device
@@ -273,39 +258,20 @@ def main(cfg: dict, checkpoint_path: str):
     if max_hull_points is not None:
         print(f'Convex hull: max_hull_points={max_hull_points:,} (random subsample of interior grid)')
 
-    if hierarchical_decode:
-        R_fine = (coarse_resolution - 1) * fine_subdiv + 1
-        effective_resolution = R_fine
-        print(
-            f'Hierarchical SDF decode: R_coarse={coarse_resolution}, subdiv={fine_subdiv}, '
-            f'dilation={surface_dilation} → embedded R_fine={R_fine} (grid_resolution={grid_resolution} unused)'
-        )
-        grid_coords = None
-    else:
-        effective_resolution = grid_resolution
-        grid_coords = get_volume_coords(
-            resolution=grid_resolution, bbox=grid_bbox, stagger_xy=grid_stagger_xy
-        ).to(device) + grid_center
-        center_str = (
-            f'  center={grid_center.cpu().tolist()}'
-            if float(grid_center.norm()) > 1e-6
-            else ''
-        )
-        print(
-            f'SDF grid: {grid_resolution}³ = {grid_coords.size(0):,} points  '
-            f'bbox=±{grid_bbox}m  stagger_xy={grid_stagger_xy}{center_str}'
-        )
-
-    hull_sdf_band = resolve_hull_sdf_band(
-        grid_bbox, effective_resolution, hull_sdf_band_cells
+    grid_coords = get_volume_coords(
+        resolution=grid_resolution, bbox=grid_bbox, stagger_xy=grid_stagger_xy
+    ).to(device) + grid_center
+    center_str = (
+        f'  center={grid_center.cpu().tolist()}'
+        if float(grid_center.norm()) > 1e-6
+        else ''
     )
-    if hull_sdf_band is not None:
-        print(
-            f'Convex hull: near-surface band '
-            f'(cells={hull_sdf_band_cells}, δ={hull_sdf_band:.5f} m)'
-        )
+    print(
+        f'SDF grid: {grid_resolution}³ = {grid_coords.size(0):,} points  '
+        f'bbox=±{grid_bbox}m  stagger_xy={grid_stagger_xy}{center_str}'
+    )
 
-    # GT point clouds for corepp-compatible Chamfer / P&R
+    # GT point clouds for Chamfer / P&R (ported from corepp/test.py)
     gt_pcd_dir = cfg.get('gt_pcd_dir', None)
     gt_ply_pattern = cfg.get('gt_ply_pattern', '*.ply')
     compute_shape_metrics = gt_pcd_dir is not None
@@ -314,7 +280,7 @@ def main(cfg: dict, checkpoint_path: str):
     else:
         print('Shape metrics disabled (set gt_pcd_dir in encoder config to enable)')
 
-    # Metric objects — identical to corepp/test.py
+    # Metric objects — ported from corepp/test.py
     cd_metric = ChamferDistance()
     pr_metric = PrecisionRecall(0.001, 0.01, 10)
 
@@ -327,7 +293,6 @@ def main(cfg: dict, checkpoint_path: str):
     # One GT PLY per tuber — avoid repeated glob + disk read each test sample
     gt_pcd_cache: dict[str, o3d.geometry.PointCloud | None] = {}
 
-    # ----- Output columns -----
     columns = [
         'file_name', 'unique_id', 'cultivar', 'growing_season', 'year',
         'gt_volume_ml', 'pred_volume_ml',
@@ -372,25 +337,9 @@ def main(cfg: dict, checkpoint_path: str):
             latent_save_ms = (t_ls1 - t_ls0) * 1e3
 
             t_dec0 = timeit.default_timer()
-            if hierarchical_decode:
-                grid_coords, pred_sdf = decode_sdf_hierarchical(
-                    latent=latent,
-                    decoder=decoder,
-                    bbox=grid_bbox,
-                    R_coarse=coarse_resolution,
-                    subdiv=fine_subdiv,
-                    surface_dilation=surface_dilation,
-                    device=device,
-                    clamp_dist=None,
-                    max_fine_queries=max_fine_queries,
-                    decode_chunk=decode_chunk,
-                    warn_fn=lambda msg: print(f'  {unique_id}: {msg}'),
-                    stagger_xy=grid_stagger_xy,
-                )
-            else:
-                latent_tiled = latent.expand(grid_coords.size(0), -1)
-                decoder_input = torch.cat([latent_tiled, grid_coords], dim=1)
-                pred_sdf = decoder(decoder_input)
+            latent_tiled = latent.expand(grid_coords.size(0), -1)
+            decoder_input = torch.cat([latent_tiled, grid_coords], dim=1)
+            pred_sdf = decoder(decoder_input)
             _sync_cuda(device)
             t_dec1 = timeit.default_timer()
             decoder_ms = (t_dec1 - t_dec0) * 1e3
@@ -408,7 +357,6 @@ def main(cfg: dict, checkpoint_path: str):
                     pred_sdf,
                     grid_coords,
                     max_hull_points=max_hull_points,
-                    hull_sdf_band=hull_sdf_band,
                 )
                 if mesh.is_watertight():
                     pred_volume = round(mesh.get_volume() * 1e6, 2)  # m³ → mL
@@ -425,7 +373,7 @@ def main(cfg: dict, checkpoint_path: str):
 
             elapsed_ms = (t_hull1 - t0) * 1e3
 
-            # corepp-compatible shape metrics: GT = centred complete scan PLY
+            # Shape metrics: GT = centred complete scan PLY
             if compute_shape_metrics and mesh is not None:
                 try:
                     if unique_id not in gt_pcd_cache:

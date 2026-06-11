@@ -9,7 +9,7 @@ scales use global min/max from metadata with a dark purple→red spectrum colorm
 By default encoder
 latents are averaged per tuber (one point per tuber, like Stage~1).
 
-Usage (from PointSDF_2/):
+Usage (from PointSDF/):
     # Export train+val+test encoder latents on the server first:
     python export_encoder_latents.py \\
         --config configs/train_encoder.yaml \\

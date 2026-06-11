@@ -1200,7 +1200,7 @@ def plot_cohort_distribution_kde(
     n_grid: int = 400,
     fill_alpha: float = 0.35,
 ) -> plt.Figure:
-    """Overlaid KDE curves (CoRe++-style smooth densities, one row per tuber)."""
+    """Overlaid KDE curves (one row per tuber)."""
     fig, ax = plt.subplots(figsize=(6.5, 6.5), constrained_layout=True)
 
     pooled: list[np.ndarray] = []

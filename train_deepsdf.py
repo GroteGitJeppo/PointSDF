@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2004-present Facebook. All Rights Reserved.
 """
-DeepSDF autodecoder training for PointSDF_2 — aligned with corepp/train_deep_sdf.py:
+DeepSDF autodecoder training — ported from corepp/train_deep_sdf.py:
   - Same per-scene loop order, L1 + latent regularisation, DataParallel, checkpoints
   - Data: SDFSceneDataset (CSV splits + samples.npz) instead of deepsdf SDFSamples
   - Config: YAML (--config) instead of specs.json (--experiment)
@@ -31,9 +31,7 @@ from data.sdf_scene_dataset import SDFSceneDataset
 from models.decoder import Decoder
 from models import SDFDecoder
 
-# ---------------------------------------------------------------------------
-# Workspace layout (same names as corepp/deepsdf/deep_sdf/workspace.py)
-# ---------------------------------------------------------------------------
+# Workspace layout from corepp/deepsdf/deep_sdf/workspace.py
 
 MODEL_PARAMS_SUBDIR = "ModelParameters"
 OPTIMIZER_PARAMS_SUBDIR = "OptimizerParameters"
@@ -71,11 +69,6 @@ def load_model_parameters(experiment_directory, checkpoint, decoder):
     data = torch.load(filename, map_location="cpu")
     decoder.load_state_dict(data["model_state_dict"])
     return data["epoch"]
-
-
-# ---------------------------------------------------------------------------
-# Repelling loss (unused in main loop; kept for parity with corepp)
-# ---------------------------------------------------------------------------
 
 
 def repelling_loss(latents, thresh=5):
@@ -257,7 +250,7 @@ def append_parameter_magnitudes(param_mag_log, model):
 
 
 def build_decoder(cfg):
-    """Match corepp NetworkSpecs when use_facebook_decoder_specs is true."""
+    """From corepp NetworkSpecs when use_facebook_decoder_specs is true."""
     if cfg.get("use_facebook_decoder_specs", False):
         ns = cfg["network_specs"]
         return Decoder(cfg["latent_size"], **ns).cuda()
@@ -418,7 +411,7 @@ def main_function(cfg, continue_from, batch_split):
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     if device.type != "cuda":
-        raise RuntimeError("DeepSDF training expects CUDA (corepp uses .cuda() throughout).")
+        raise RuntimeError("DeepSDF training expects CUDA.")
 
     lat_vecs = lat_vecs.to(device)
 
@@ -572,7 +565,7 @@ def _configure_logging(verbose):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Train a DeepSDF autodecoder (PointSDF_2, corepp-compatible loop)"
+        description="Train a DeepSDF autodecoder (ported from corepp/train_deep_sdf.py)"
     )
     parser.add_argument(
         "--config",
@@ -613,7 +606,7 @@ if __name__ == "__main__":
 
     # Optional copy for interoperability with tools that expect specs.json
     specs_json = {
-        "Description": cfg.get("description", "PointSDF_2 DeepSDF"),
+        "Description": cfg.get("description", "PointSDF DeepSDF"),
         "CodeLength": cfg["latent_size"],
         "NumEpochs": cfg["epochs"],
         "SamplesPerScene": cfg["samples_per_scene"],

@@ -55,7 +55,7 @@ dependencies:
     - torch_sparse==0.6.18
     - torch_spline_conv==1.2.2
 
-    # Computer vision (4.8.x confirmed working on Python 3.10 — corepp stack)
+    # Computer vision (4.8.x confirmed working on Python 3.10)
     - opencv-python==4.8.1.78
 
     # Mesh processing and SDF extraction (needed for DeepSDF data pipeline)

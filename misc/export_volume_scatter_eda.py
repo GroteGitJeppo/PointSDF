@@ -5,9 +5,8 @@ Writes six single-panel PDFs without plot titles (use LaTeX subcaptions):
 four for the eda subset/full layout (2023 + volume-matched 2025 vs all years), plus
 two for 2023-only primary and secondary CSVs. Same cohort colours, regression line,
 y=x reference, and shared axis limits per row/pair as misc/eda.ipynb.
-Styling matches misc/export_latent_pca_thesis.py (thesis_style).
 
-Usage (from PointSDF_2/ or misc/):
+Usage (from PointSDF/ or misc/):
     python misc/export_volume_scatter_eda.py \\
         --csv results/46943_16_t01_06_225655.csv \\
         --csv-mean results/corepp_all_32.csv \\

@@ -137,8 +137,6 @@ class PointCloudLatentDataset(Dataset):
 
         print(f"PointCloudLatentDataset [{split}]: {len(self.samples)} samples")
 
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _load_latents_dict(label_to_path: dict[str, str]) -> dict[str, torch.Tensor]:
         """Load all per-fruit latent codes into RAM once at construction time.
@@ -299,7 +297,6 @@ class PointCloudLatentDataset(Dataset):
         rot = self._rotation_matrix_xyz(rx, ry, rz).to(points.dtype)
         points = points @ rot.T
 
-        # X-direction shear (CoRe++ augment.py: T[0,1], T[0,2]).
         if np.random.rand() < float(cfg["shear_prob"]):
             points = self._apply_shear_x(points, float(cfg["max_shear"]))
 
@@ -372,8 +369,7 @@ class PointCloudLatentDataset(Dataset):
         # Shape (1, latent_size) so PyG's Batch concatenates to (B, latent_size)
         data.latent = latent.unsqueeze(0)
 
-        # Expose the tuber label so the training loop can form contrastive pairs
-        # (mirrors corepp's fruit_id). PyG Batch collates strings as a plain list.
+        # Exposed for contrastive pairs; PyG Batch collates strings as a plain list.
         data.label = label
 
         # SDF samples — shape (1, N_sdf, 3/1) so Batch gives (B, N_sdf, 3/1)
@@ -402,9 +398,8 @@ class TuberBatchSampler(Sampler):
 
     Each batch contains exactly ``k_scans`` random scans from each of
     ``n_labels`` randomly chosen tubers, giving an effective batch size of
-    ``n_labels * k_scans``.  This mirrors corepp's natural same-label
-    collision rate and makes the attraction term of AttRepLoss actually fire
-    every step rather than ~30% of the time under uniform random sampling.
+    ``n_labels * k_scans``.  Ensures same-tuber pairs so the AttRepLoss
+    attraction term fires every step rather than ~30% under uniform sampling.
 
     Args:
         label_to_indices: dict mapping label → list of dataset indices,

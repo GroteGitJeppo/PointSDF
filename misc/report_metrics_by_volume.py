@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CoRe++-style metrics by ground-truth volume bin (per partial scan, not per tuber)."""
+"""Metrics by ground-truth volume bin (per partial scan, not per tuber)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from corepp_metrics import (
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Report CoRe++ paper metrics (Table 4 style) by GT volume bin. "
+            "Report metrics (Table 4 bins) by GT volume bin. "
             "Uses every partial point-cloud row in the CSV (no per-tuber averaging). "
             "Use --match-2025 for eda.ipynb 2025 subsample, or --only-2023 for 2023 only."
         )
@@ -84,7 +84,7 @@ def main() -> None:
     summary = summary.apply(lambda s: s.map(lambda v: round(v, 1) if isinstance(v, float) else v))
 
     scheme_label = (
-        "CoRe++ Table 4 bins"
+        "Table 4 bins (--bin-scheme corepp)"
         if args.bin_scheme == "corepp"
         else f"{args.bin_width:g} ml fixed-width bins"
     )

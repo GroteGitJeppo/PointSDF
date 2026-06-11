@@ -1,6 +1,6 @@
 # PointSDF — 3D Shape Completion for Potato Tuber Volume Estimation
 
-Encoder–decoder pipeline for estimating **potato tuber volume (mL)** from a single **partial point cloud** (conveyor RGB-D). A PointNet++ encoder predicts a DeepSDF latent code; a frozen MLP decoder evaluates an SDF on a 3D grid; volume comes from the **convex hull** of interior grid points, following CoRe++.
+Encoder–decoder pipeline for estimating **potato tuber volume (mL)** from a single **partial point cloud** (conveyor RGB-D). A PointNet++ encoder predicts a DeepSDF latent code; a frozen MLP decoder evaluates an SDF on a 3D grid; volume comes from the **convex hull** of interior grid points.
 
 ```
 Partial point cloud (.ply, from conveyor belt)
@@ -348,8 +348,7 @@ PointSDF/
 │   ├── chamfer_distance.py
 │   └── precision_recall.py
 ├── utils/
-│   ├── sdf_helpers.py           # grid coords, sdf2mesh (convex hull)
-│   └── hierarchical_decode.py   # optional coarse-to-fine decode
+│   └── sdf_helpers.py           # grid coords, sdf2mesh (convex hull)
 ├── misc/                        # analysis scripts (not part of core train path)
 │   ├── compute_bbox_stats.py
 │   ├── visualize_latents.py
@@ -420,8 +419,6 @@ Tables list **keys and roles**. Numeric defaults change during tuning — **alwa
 | `snapshot_frequency` | `10` | Epoch snapshots for `select_checkpoint.py` |
 | `grid_resolution` | `32` | Uniform grid side length (`32³` queries) |
 | `grid_bbox` | *(yaml)* | Half-extent of SDF bbox (m); typically matches `normalize_half_extent` |
-| `hierarchical_decode` | `false` | Coarse-to-fine decode in test/select |
-| `hull_sdf_band_cells` | `2` | Near-surface hull band in grid cells (`null` = full interior) |
 | `max_hull_points` | `2048` | Cap interior points for convex hull |
 | `results_dir` | `results` | `test.py` CSV output directory |
 | `gt_pcd_dir` | `data/3DPotatoTwin/2_sfm/2_pcd` | GT mesh for Chamfer / P&R |
@@ -436,7 +433,7 @@ Tables list **keys and roles**. Numeric defaults change during tuning — **alwa
 | Reconstruct latents for Stage 2 | Test-time optimisation with frozen decoder yields decoder-consistent targets vs raw autodecoder embeddings. |
 | `E*` by val Chamfer | Reconstruction quality on held-out complete shapes peaks before overfitting train latents. |
 | Encoder checkpoint for eval | **Always** `select_checkpoint.py` after training → lowest **val volume RMSE** → `best_vol_<R>/`. `encoder.pth` is val latent MSE only. |
-| Convex hull volume | Potatoes are roughly convex; hull is fast, watertight, and matches CoRe++. |
+| Convex hull volume | Potatoes are roughly convex; hull is fast and watertight. |
 | Latent size 16 |
 | Point clouds only (no RGB-D CNN) | Geometry-only input; no camera-specific encoder |
 | Raw **scale ratio** in latent head |

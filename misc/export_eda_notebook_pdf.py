@@ -9,7 +9,7 @@ Reproduces the notebook's static plots (volume scatter, relative error, GT
 distribution, train-coverage analysis, per-frame histograms, size-bin bars).
 Skips Plotly / Open3D interactive cells.
 
-Usage (from PointSDF_2/ or misc/):
+Usage (from PointSDF/ or misc/):
     python misc/export_eda_notebook_pdf.py
     python misc/export_eda_notebook_pdf.py --output misc/eda_figures.pdf
 

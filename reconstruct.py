@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test-time latent optimisation for PointSDF_2 — mirrors corepp/reconstruct_deep_sdf.py.
+Test-time latent optimisation — ported from corepp/reconstruct_deep_sdf.py.
 
 Three main uses:
 
@@ -9,7 +9,7 @@ Three main uses:
 
        python reconstruct.py -c configs/train_deepsdf.yaml \\
            --experiment_dir weights/deepsdf/<run> \\
-           --split val --all-checkpoints        # test every 10th epoch (corepp default)
+           --split val --all-checkpoints        # test every 10th epoch (default step)
 
        python reconstruct.py -c configs/train_deepsdf.yaml \\
            --experiment_dir weights/deepsdf/<run> \\
@@ -49,7 +49,7 @@ from tqdm import tqdm
 from data.sdf_samples import resolve_samples_npz
 from models.decoder import Decoder
 from models import SDFDecoder
-from utils import decode_sdf_hierarchical, get_volume_coords, resolve_hull_sdf_band, sdf2mesh
+from utils import get_volume_coords, sdf2mesh
 from metrics_3d.chamfer_distance import ChamferDistance
 
 MODEL_PARAMS_SUBDIR = "ModelParameters"
@@ -57,10 +57,6 @@ LATENT_CODES_SUBDIR = "LatentCodes"
 RECONSTRUCTIONS_SUBDIR = "Reconstructions"
 CODES_SUBDIR = "Codes"
 
-
-# ---------------------------------------------------------------------------
-# Decoder loading
-# ---------------------------------------------------------------------------
 
 def _load_decoder(experiment_dir: str, checkpoint: str, cfg: dict) -> torch.nn.Module:
     """Load Stage 1 decoder from a DataParallel checkpoint, return bare module on CUDA."""
@@ -90,10 +86,6 @@ def _load_decoder(experiment_dir: str, checkpoint: str, cfg: dict) -> torch.nn.M
     return decoder.cuda()
 
 
-# ---------------------------------------------------------------------------
-# Training latent statistics (used to initialise test-time latents)
-# ---------------------------------------------------------------------------
-
 def _empirical_stat(experiment_dir: str, checkpoint: str):
     """Return (mean, std) tensors computed from the saved training latent codes."""
     lat_path = os.path.join(experiment_dir, LATENT_CODES_SUBDIR, checkpoint + ".pth")
@@ -106,9 +98,7 @@ def _empirical_stat(experiment_dir: str, checkpoint: str):
     return mean.cuda(), std.cuda()
 
 
-# ---------------------------------------------------------------------------
-# Per-shape latent optimisation (mirrors corepp reconstruct_deep_sdf.py)
-# ---------------------------------------------------------------------------
+# Per-shape latent optimisation — ported from corepp/reconstruct_deep_sdf.py
 
 def _optimise_latent(
     decoder: torch.nn.Module,
@@ -135,7 +125,7 @@ def _optimise_latent(
     optimizer = torch.optim.Adam([latent], lr=lr)
     loss_fn = torch.nn.MSELoss(reduction="sum")
 
-    # LR halved at midpoint (mirrors corepp)
+    # LR halved at midpoint (ported from corepp/reconstruct_deep_sdf.py)
     decreased_by = 10
     adjust_lr_every = int(num_iterations / 2)
 
@@ -169,14 +159,8 @@ def _optimise_latent(
     return latent.detach().squeeze(0).cpu()  # (latent_size,)
 
 
-# ---------------------------------------------------------------------------
-# Chamfer distance — corepp-compatible
-# ---------------------------------------------------------------------------
-# Mirrors corepp/compute_reconstruction_metrics.py:
-#   - GT  = complete laser/SfM PLY, centred (matches T.Center applied to partial scans)
-#   - Pred = mesh extracted via sdf2mesh (convex hull of SDF < 0, same as test.py)
-#   - Metric = metrics_3d.ChamferDistance: (mean(gt→pred) + mean(pred→gt)) / 2
-# ---------------------------------------------------------------------------
+# Chamfer — ported from corepp/compute_reconstruction_metrics.py
+# GT = centred complete laser PLY; pred = sdf2mesh hull; metrics_3d.ChamferDistance
 
 _cd_metric = ChamferDistance()
 
@@ -199,17 +183,10 @@ def _chamfer_for_latent(
     label: str,
     ply_pattern: str,
     grid_resolution: int = 64,
-    hierarchical_decode: bool = False,
-    coarse_resolution: int = 16,
-    fine_subdiv: int = 4,
-    surface_dilation: int = 1,
-    max_fine_queries: int | None = None,
-    decode_chunk: int = 131072,
     stagger_xy: bool = False,
-    hull_sdf_band: float | None = None,
 ) -> float | None:
     """
-    Compute corepp-compatible Chamfer distance for one shape given its latent.
+    Compute Chamfer distance for one shape given its latent.
 
     Extracts a mesh from the SDF grid (same pipeline as test.py) and compares
     it against the centred GT laser PLY using metrics_3d.ChamferDistance.
@@ -225,31 +202,15 @@ def _chamfer_for_latent(
     lat_b = latent.to(device).unsqueeze(0)
 
     with torch.no_grad():
-        if hierarchical_decode:
-            grid_coords, pred_sdf = decode_sdf_hierarchical(
-                latent=lat_b,
-                decoder=decoder,
-                bbox=bbox,
-                R_coarse=coarse_resolution,
-                subdiv=fine_subdiv,
-                surface_dilation=surface_dilation,
-                device=device,
-                clamp_dist=None,
-                max_fine_queries=max_fine_queries,
-                decode_chunk=decode_chunk,
-                warn_fn=lambda msg: logging.debug("    %s: %s", label, msg),
-                stagger_xy=stagger_xy,
-            )
-        else:
-            grid_coords = get_volume_coords(
-                resolution=grid_resolution, bbox=bbox, stagger_xy=stagger_xy
-            ).to(device)
-            lat_exp = lat_b.expand(grid_coords.shape[0], -1)
-            net_in = torch.cat([lat_exp, grid_coords], dim=1)
-            pred_sdf = decoder(net_in)
+        grid_coords = get_volume_coords(
+            resolution=grid_resolution, bbox=bbox, stagger_xy=stagger_xy
+        ).to(device)
+        lat_exp = lat_b.expand(grid_coords.shape[0], -1)
+        net_in = torch.cat([lat_exp, grid_coords], dim=1)
+        pred_sdf = decoder(net_in)
 
     try:
-        mesh = sdf2mesh(pred_sdf, grid_coords, hull_sdf_band=hull_sdf_band)
+        mesh = sdf2mesh(pred_sdf, grid_coords)
     except (ValueError, RuntimeError) as e:
         logging.debug("    %s: mesh extraction failed: %s", label, e)
         return None
@@ -258,10 +219,6 @@ def _chamfer_for_latent(
     _cd_metric.update(gt_pcd, mesh)
     return _cd_metric.compute(print_output=False)
 
-
-# ---------------------------------------------------------------------------
-# Checkpoint discovery
-# ---------------------------------------------------------------------------
 
 def _discover_checkpoints(experiment_dir: str, step: int) -> list[int]:
     """
@@ -287,10 +244,6 @@ def _discover_checkpoints(experiment_dir: str, step: int) -> list[int]:
                     epochs.append(epoch)
     return sorted(epochs)
 
-
-# ---------------------------------------------------------------------------
-# Per-checkpoint worker (shared between single-checkpoint and sweep modes)
-# ---------------------------------------------------------------------------
 
 def _run_checkpoint(
     checkpoint: str,
@@ -354,27 +307,11 @@ def _run_checkpoint(
             if gt_pcd_dir is None:
                 logging.warning(
                     "gt_pcd_dir not set in config — Chamfer skipped. "
-                    "Add gt_pcd_dir to train_deepsdf.yaml to enable corepp-compatible Chamfer."
+                    "Add gt_pcd_dir to train_deepsdf.yaml to enable Chamfer evaluation."
                 )
                 compute_chamfer = False
             else:
-                mfq = cfg.get("max_fine_queries", None)
-                if mfq is not None:
-                    mfq = int(mfq)
                 grid_res = int(cfg.get("grid_resolution", 64))
-                hier = bool(cfg.get("hierarchical_decode", False))
-                coarse_res = int(cfg.get("coarse_resolution", 16))
-                fine_sub = int(cfg.get("fine_subdiv", 4))
-                eff_res = (
-                    (coarse_res - 1) * fine_sub + 1
-                    if hier
-                    else grid_res
-                )
-                hull_sdf_band = resolve_hull_sdf_band(
-                    clamp_dist * 1.5,
-                    eff_res,
-                    cfg.get("hull_sdf_band_cells"),
-                )
                 cd = _chamfer_for_latent(
                     latent=latent,
                     decoder=decoder,
@@ -383,14 +320,7 @@ def _run_checkpoint(
                     label=label,
                     ply_pattern=ply_pattern,
                     grid_resolution=grid_res,
-                    hierarchical_decode=hier,
-                    coarse_resolution=coarse_res,
-                    fine_subdiv=fine_sub,
-                    surface_dilation=int(cfg.get("surface_dilation", 1)),
-                    max_fine_queries=mfq,
-                    decode_chunk=int(cfg.get("hierarchical_decode_chunk", 131072)),
                     stagger_xy=bool(cfg.get("grid_stagger_xy", False)),
-                    hull_sdf_band=hull_sdf_band,
                 )
                 if cd is not None:
                     chamfer_vals.append(cd)
@@ -399,10 +329,6 @@ def _run_checkpoint(
     mean_cd = float(np.mean(chamfer_vals)) if chamfer_vals else None
     return mean_cd
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main(args):
     logging.basicConfig(
@@ -445,9 +371,6 @@ def main(args):
     labels = [l for l in labels if l in ram]
     logging.info("Loaded %d shapes (split=%s) into RAM", len(labels), args.split)
 
-    # -----------------------------------------------------------------------
-    # SWEEP MODE  (--all-checkpoints <step>)
-    # -----------------------------------------------------------------------
     if args.all_checkpoints is not None:
         step = args.all_checkpoints
         checkpoints = _discover_checkpoints(experiment_dir, step)
@@ -515,9 +438,6 @@ def main(args):
 
         return
 
-    # -----------------------------------------------------------------------
-    # SINGLE-CHECKPOINT MODE  (--checkpoint <name>)
-    # -----------------------------------------------------------------------
     compute_chamfer = args.chamfer
 
     print(f"\nReconstructing checkpoint '{args.checkpoint}' on split={args.split!r} …")
@@ -554,7 +474,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description=(
-            "Test-time latent optimisation for PointSDF_2.\n\n"
+            "Test-time latent optimisation.\n\n"
             "Sweep mode (--all-checkpoints): finds the best Stage 1 epoch by evaluating\n"
             "Chamfer distance on the val split for every N-th saved checkpoint.\n"
             "Single-checkpoint mode (--checkpoint): reconstructs one checkpoint and\n"
@@ -586,7 +506,7 @@ if __name__ == "__main__":
         metavar="STEP",
         help=(
             "Sweep all numeric checkpoints in ModelParameters/, testing every STEP-th epoch. "
-            "Defaults to STEP=10 (matching corepp/run_scripts_reconstruct.sh) if no value is given. "
+            "Defaults to STEP=10 (corepp/run_scripts_reconstruct.sh) if no value is given. "
             "Implies --chamfer and --skip. Example: --all-checkpoints 50"
         ),
     )
@@ -623,7 +543,7 @@ if __name__ == "__main__":
         "--iters",
         type=int,
         default=800,
-        help="Latent optimisation iterations per shape (default 800, matching corepp).",
+        help="Latent optimisation iterations per shape (default 800, from corepp/reconstruct_deep_sdf.py).",
     )
     parser.add_argument(
         "--num_samples",
@@ -635,7 +555,7 @@ if __name__ == "__main__":
         "--lr",
         type=float,
         default=0.1,
-        help="Initial learning rate for latent optimisation (default 0.1, matching corepp).",
+        help="Initial learning rate for latent optimisation (default 0.1, from corepp/reconstruct_deep_sdf.py).",
     )
     parser.add_argument(
         "--chamfer",

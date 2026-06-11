@@ -9,7 +9,7 @@ Writes:
   <output_dir>/<run>/latent_dir/all_latents.pth           merged (default)
   <output_dir>/<run>/latent_dir/scan_splits.pth           stem → split map
 
-Usage (on server, from PointSDF_2/):
+Usage (on server, from PointSDF/):
     python export_encoder_latents.py \\
         --config configs/train_encoder.yaml \\
         --checkpoint weights/encoder/<run>/best_vol_32/checkpoint.pth

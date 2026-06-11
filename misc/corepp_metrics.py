@@ -1,4 +1,4 @@
-"""Aggregate test-result CSV metrics in the CoRe++ paper format (per partial scan)."""
+"""Aggregate test-result CSV metrics per partial scan (Table 4/5 bin format)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ COHORT_GROUPS = (
     "Kitahime (2025)",
 )
 
-# CoRe++ paper Table 4 size classes (ml).
+# Table 4 volume size classes (ml).
 COREPP_VOLUME_BINS = (
     (0, 100),
     (100, 150),
@@ -327,7 +327,7 @@ def _rel_error_pct(gt: pd.Series, pred: pd.Series) -> float:
 
 
 def summarize_corepp_metrics(df: pd.DataFrame) -> dict[str, float | int]:
-    """One summary row: per-frame means + RMSE over all frames (CoRe++ Tables 4/5)."""
+    """One summary row: per-frame means + RMSE over all frames (Tables 4/5 format)."""
     sub = df.copy()
     vol_mask = (
         pd.to_numeric(sub["gt_volume_ml"], errors="coerce").notna()
@@ -440,7 +440,7 @@ def add_results_args(parser: argparse.ArgumentParser) -> None:
         "--data-root",
         type=Path,
         default=None,
-        help="3DPotatoTwin root for --match-2025 (default: PointSDF_2/data/3DPotatoTwin)",
+        help="3DPotatoTwin root for --match-2025 (default: PointSDF/data/3DPotatoTwin)",
     )
 
 

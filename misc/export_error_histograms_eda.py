@@ -6,7 +6,7 @@ subcaptions): stacked cohort histograms, zero line on volume error, overall
 mean line. By default exports both --csv and --csv-mean with shared x/y axes
 per metric so histograms are directly comparable.
 
-Usage (from PointSDF_2/):
+Usage (from PointSDF/):
     python misc/export_error_histograms_eda.py --csv results/46943_16_t01_06_225655.csv --csv-mean results/_super3d_32_best_model_20_t07_06_154905.csv --output misc/thesis_figures
 """
 

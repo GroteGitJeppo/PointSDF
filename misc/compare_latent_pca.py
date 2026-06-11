@@ -5,7 +5,7 @@ Fits PCA on Stage 1 reconstruct latents only, then projects:
   - each Stage 1 point (one per tuber), and
   - the mean encoder latent across frames for the same tuber.
 
-Usage (run from PointSDF_2/):
+Usage (run from PointSDF/):
     python misc/compare_latent_pca.py \\
         --stage1_latents weights/decoder_latents \\
         --encoder_latents weights/all_latents.pth \\

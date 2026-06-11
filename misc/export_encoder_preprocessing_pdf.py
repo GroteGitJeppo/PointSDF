@@ -9,7 +9,7 @@ Reproduces the four-panel figure:
 
 Requires: pip install plotly kaleido open3d pyyaml
 
-Usage (from PointSDF_2/, one line — PowerShell does not use bash \\ continuations):
+Usage (from PointSDF/, one line — PowerShell does not use bash \\ continuations):
 
     python misc/export_encoder_preprocessing_pdf.py --ply misc/reviewdata/R9-9_pcd_365.ply -o misc/encoder_preprocessing.pdf --separate
 

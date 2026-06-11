@@ -6,7 +6,7 @@ so both cohorts share PC axes and plot limits. All Stage~1 decoder latents (2023
 as semi-transparent grey points. Trait and volume
 colour scales use min/max over all tubers in ``mesh_traits.csv`` (full dataset).
 
-Usage (from PointSDF_2/):
+Usage (from PointSDF/):
     python misc/export_latent_pca_encoder_compare.py \\
         --encoder_latents weights/encoder/<run>/latent_dir \\
         --output misc/results/latent_pca_encoder_compare

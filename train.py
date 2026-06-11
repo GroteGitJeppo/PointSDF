@@ -48,25 +48,24 @@ if not WITH_TORCH_CLUSTER:
     raise SystemExit("This code requires 'torch-cluster'")
 
 
-# ---------------------------------------------------------------------------
-# Contrastive loss (AttRepLoss) — ported from corepp/loss.py
-# ---------------------------------------------------------------------------
+# AttRepLoss — ported from corepp/loss.py
 
 def att_rep_loss(latents: torch.Tensor, labels: list, delta_rep: float = 0.5) -> torch.Tensor:
     """
-    Attraction-repulsion contrastive loss (Magistri et al., 2022 / corepp).
+    Attraction-repulsion contrastive loss (Magistri et al., 2022).
+    Ported from corepp/loss.py.
 
     For each pair (i, j):
       - same label  → attract: penalise ||z_i - z_j||
       - diff label  → repel:   penalise max(0, delta_rep - ||z_i - z_j||)
 
     The raw sum is divided by B² so the return value is on the same scale
-    regardless of batch size, and comparable to the per-element MSE loss.
+    regardless of batch size.
 
     Args:
         latents:   (B, latent_size) predicted latent vectors
         labels:    list of B label strings (potato tuber IDs)
-        delta_rep: repulsion margin (default 0.5, matching corepp)
+        delta_rep: repulsion margin (default 0.5)
     Returns:
         scalar loss (mean over all B² pairs)
     """
@@ -83,10 +82,6 @@ def att_rep_loss(latents: torch.Tensor, labels: list, delta_rep: float = 0.5) ->
         h_loss = h_loss + hinged(dist, same).sum()
     return h_loss / (B * B)
 
-
-# ---------------------------------------------------------------------------
-# Training / validation steps
-# ---------------------------------------------------------------------------
 
 def train_epoch(
     encoder, decoder, optimizer, loader,
@@ -106,7 +101,6 @@ def train_epoch(
         reg = sigma ** 2 * pred_latent.pow(2).sum(dim=1).mean()
         loss = mse + reg
 
-        # Contrastive loss (matches corepp's AttRepLoss with lambda_attraction=0.05)
         att_l = torch.tensor(0.0, device=device)
         if contrastive and hasattr(batch, 'label'):
             att_l = att_rep_loss(pred_latent, batch.label, delta_rep)
@@ -187,10 +181,6 @@ def val_epoch(
     n = len(loader)
     return total_loss / n, total_mse / n, total_reg / n, total_sdf / n, total_att / n
 
-
-# ---------------------------------------------------------------------------
-# Sampling helpers (morphology-balanced training)
-# ---------------------------------------------------------------------------
 
 def _make_sample_weights(
     sample_labels: list[str],
@@ -293,10 +283,6 @@ def _make_sample_weights(
     return weights, keys, stats
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main(cfg: dict):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
@@ -321,7 +307,6 @@ def main(cfg: dict):
     print("Evaluation protocol: 2025 is strict blind test-only. "
           "Checkpoint selection uses train/val only.")
 
-    # ----- Load Stage 1 decoder (frozen) -----
     decoder_cfg_path = cfg['decoder_config']
     with open(decoder_cfg_path) as f:
         decoder_cfg = yaml.safe_load(f)
@@ -341,7 +326,6 @@ def main(cfg: dict):
     decoder.eval()
     print(f'Loaded frozen decoder from {cfg["decoder_weights"]}')
 
-    # ----- Datasets -----
     sdf_data_dir = cfg.get('sdf_data_dir', None)
     sdf_samples = int(cfg.get('sdf_samples_per_shape', 1024))
     sdf_clamp = cfg.get('sdf_clamp_value', None)
@@ -382,7 +366,6 @@ def main(cfg: dict):
         ply_index_csv=ply_index_csv,
     )
 
-    # ----- Sampler selection (mutually exclusive) -----
     # Priority: tuber_sampler > weighted sampler > plain shuffle.
     tuber_cfg = cfg.get("tuber_sampler", {})
     use_tuber_sampler = bool(tuber_cfg.get("enabled", False))
@@ -441,7 +424,6 @@ def main(cfg: dict):
         shuffle=False, num_workers=4,
     )
 
-    # ----- Encoder -----
     encoder = PointNetEncoder(latent_size=decoder_cfg['latent_size']).to(device)
 
     optimizer = optim.Adam(
@@ -470,7 +452,6 @@ def main(cfg: dict):
     if use_contrastive:
         print(f'Contrastive loss (AttRepLoss) enabled — lambda={lambda_attraction}, delta_rep={delta_rep}')
 
-    # ----- Optional resume from snapshot checkpoint -----
     resume_path = cfg.get('_resume_checkpoint', None)
     start_epoch = 0
     best_val_loss = float('inf')
@@ -486,7 +467,6 @@ def main(cfg: dict):
             scheduler.step()
         print(f'  Resumed from epoch {start_epoch}, best_val_loss={best_val_loss:.5f}')
 
-    # ----- Training loop -----
     snapshot_freq = int(cfg.get('snapshot_frequency', 10))
     snapshots_dir = os.path.join(output_dir, 'snapshots')
     os.makedirs(snapshots_dir, exist_ok=True)

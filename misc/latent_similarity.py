@@ -16,7 +16,7 @@ Reports
   - ``pairwise_stage1.png``      — pairwise cosine similarity heatmap of the Stage 1
                                    latent space (shows how spread the space is)
 
-Usage (run from PointSDF_2/):
+Usage (run from PointSDF/):
     python misc/latent_similarity.py \\
         --stage1_latents weights/deepsdf/<run>/latent_codes \\
         --encoder_latents weights/encoder/<run>/latent_dir/test/all_latents.pth \\
@@ -44,10 +44,6 @@ DEFAULT_CULTIVAR_CSV = (
     Path(__file__).resolve().parent.parent / "data" / "3DPotatoTwin" / "ground_truth.csv"
 )
 
-
-# ---------------------------------------------------------------------------
-# Loaders
-# ---------------------------------------------------------------------------
 
 def load_stage1(latents_dir: str) -> dict[str, np.ndarray]:
     """Load Stage 1 per-label latents from a directory of ``{label}.pth`` files."""
@@ -87,10 +83,6 @@ def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     b_t = torch.tensor(b)
     return float(F.cosine_similarity(a_t.unsqueeze(0), b_t.unsqueeze(0)).item())
 
-
-# ---------------------------------------------------------------------------
-# Figures
-# ---------------------------------------------------------------------------
 
 def _histogram(sims: np.ndarray, output_dir: str) -> None:
     fig, ax = plt.subplots(figsize=(7, 4))
@@ -160,10 +152,6 @@ def _pairwise_heatmap(stage1: dict[str, np.ndarray], output_dir: str) -> None:
     plt.close(fig)
     print(f"  Saved {out}")
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main(
     stage1_dir: str,

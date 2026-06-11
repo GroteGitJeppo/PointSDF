@@ -1,11 +1,11 @@
 """
 Compute bounding-box statistics across all complete SfM scans.
 
-Mirrors corepp's find_global_bbox() logic: for each sample find the largest
+Ported from corepp find_global_bbox: for each sample find the largest
 single axis-aligned dimension (dx, dy, dz), then report the per-sample
 distribution and the global maximum.
 
-Usage (run from PointSDF_2/ or pass an absolute path):
+Usage (run from PointSDF/ or pass an absolute path):
     python misc/compute_bbox_stats.py
     python misc/compute_bbox_stats.py --pcd_dir data/3DPotatoTwin/2_sfm/2_pcd
 
@@ -13,8 +13,8 @@ File layout assumed:
     <pcd_dir>/<sample>/<sample>_10000.ply
     e.g. data/3DPotatoTwin/2_sfm/2_pcd/2R1-2/2R1-2_10000.ply
 
-The printed "global dmax" is the value corepp would use as its bbox half-extent
-(dmax / 2).  For PointSDF_2 the relevant number is dmax in normalised units
+The printed "global dmax" is the full axis-aligned side length; half-extent
+is dmax / 2.  For PointSDF the relevant number in normalised units
 (i.e. after centering + isotropic scale to normalize_half_extent = 0.05 m),
 which is always exactly 0.05 m by construction — but knowing the raw metric
 dmax tells you how much physical space one normalised unit represents.
@@ -95,7 +95,7 @@ def main(pcd_dir: str, pattern: str) -> None:
     print("=" * 50)
     print("Summary (all values in mm):")
     print(f"  N scans      : {len(rows)}")
-    print(f"  dmax  global : {dmaxes.max()*1000:.1f}  ← corepp bbox side (use half = {dmaxes.max()/2*1000:.1f} mm as half-extent)")
+    print(f"  dmax  global : {dmaxes.max()*1000:.1f}  (half-extent = {dmaxes.max()/2*1000:.1f} mm)")
     print(f"  dmax  mean   : {dmaxes.mean()*1000:.1f}")
     print(f"  dmax  median : {np.median(dmaxes)*1000:.1f}")
     print(f"  dmax  p95    : {np.percentile(dmaxes, 95)*1000:.1f}")
@@ -106,11 +106,11 @@ def main(pcd_dir: str, pattern: str) -> None:
     print(f"  dz    mean   : {dzs.mean()*1000:.1f}  (range {dzs.min()*1000:.1f} – {dzs.max()*1000:.1f})")
     print()
 
-    # PointSDF_2 context
+    # PointSDF context
     norm_he = 0.05  # normalize_half_extent in metres
     global_dmax_m = dmaxes.max()
     scale_ratio = global_dmax_m / (2 * norm_he)
-    print("PointSDF_2 context (normalize_half_extent = 0.05 m):")
+    print("PointSDF context (normalize_half_extent = 0.05 m):")
     print(f"  1 normalised unit = {scale_ratio*1000:.1f} mm in metric space")
     print(f"  Potato occupies [-0.05, 0.05]^3 after normalisation by construction.")
     print()

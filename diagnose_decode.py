@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Decode-step diagnostic for PointSDF_2.
+Decode-step diagnostic.
 
-Bypasses the encoder entirely and feeds the corepp ground-truth latent codes
-directly into the frozen decoder.  Measures volume RMSE / R² against GT.
+Bypasses the encoder and feeds Stage 1 ground-truth latent codes from
+``latent_dir`` directly into the frozen decoder.  Measures volume RMSE / R².
 
-If results are good (RMSE similar to corepp's reported ~22 mL on test):
+If results are good (RMSE ~22 mL or better on test):
     → decode step (grid_center, grid_bbox, grid_resolution) is correct.
     → the problem is entirely in the encoder; see encoder diagnostics next.
 
@@ -13,7 +13,7 @@ If results are bad (RMSE >> 30 mL or R² < 0):
     → decode step is broken regardless of encoder quality.
     → fix grid_center / grid_bbox first before retraining.
 
-Usage (on server, from the PointSDF_2/ root):
+Usage (on server, from the PointSDF/ root):
     python misc/diagnose_decode.py --config configs/train_encoder.yaml [--split val]
 """
 
@@ -29,7 +29,7 @@ from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_err
 from tqdm import tqdm
 
 from models import SDFDecoder
-from utils import get_volume_coords, resolve_hull_sdf_band, sdf2mesh
+from utils import get_volume_coords, sdf2mesh
 
 warnings.filterwarnings("ignore")
 
@@ -77,16 +77,6 @@ def main(cfg: dict, split: str) -> None:
         f"SDF grid: {grid_resolution}³ = {grid_coords.size(0):,} points"
         f"  bbox=±{grid_bbox} m  stagger_xy={grid_stagger_xy}{center_str}"
     )
-    hull_sdf_band_cells = cfg.get("hull_sdf_band_cells")
-    hull_sdf_band = resolve_hull_sdf_band(
-        grid_bbox, grid_resolution, hull_sdf_band_cells
-    )
-    if hull_sdf_band is not None:
-        print(
-            f"Convex hull: near-surface band "
-            f"(cells={hull_sdf_band_cells}, δ={hull_sdf_band:.5f} m)"
-        )
-
     latent_dir = Path(cfg["latent_dir"])
     print(f"Latent dir: {latent_dir}")
 
@@ -135,7 +125,7 @@ def main(cfg: dict, split: str) -> None:
             pred_sdf = decoder(decoder_input)
 
             try:
-                mesh = sdf2mesh(pred_sdf, grid_coords, hull_sdf_band=hull_sdf_band)
+                mesh = sdf2mesh(pred_sdf, grid_coords)
                 if mesh.is_watertight():
                     pred_vols.append(mesh.get_volume() * 1e6)
                     gt_vols.append(float(gt_df.loc[label, volume_col]))
@@ -199,8 +189,8 @@ def main(cfg: dict, split: str) -> None:
         print("      UNCENTERED full laser/SfM scans in the SCANNER frame.")
         print("      Verify that your EDA computed this from the full scans,")
         print("      not from the partial (camera-frame) RGBD scans.")
-        print("    - The corepp decoder may have been trained on CENTERED scans")
-        print("      (if the centering code in corepp was not commented out).")
+        print("    - The Stage 1 decoder may have been trained on CENTERED scans")
+        print("      (check whether centering was enabled in corepp training).")
         print("      In that case, set grid_center: [0.0, 0.0, 0.0].")
         print("    - grid_bbox=0.15 m may be too small for some potatoes.")
     print("=" * 60)
@@ -208,7 +198,7 @@ def main(cfg: dict, split: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Diagnostic: decode GT corepp latents and measure volume accuracy."
+        description="Diagnostic: decode GT Stage 1 latents and measure volume accuracy."
     )
     parser.add_argument(
         "--config", "-c",

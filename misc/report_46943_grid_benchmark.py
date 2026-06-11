@@ -5,7 +5,7 @@ Filenames follow test.py: ``46943_<grid>_t<timestamp>.csv``. Incomplete runs
 (fewer frames than the full test set) are dropped. One row per grid: lowest RMSE
 among complete runs (tie-break: rel. error, then exec time).
 
-Usage (from PointSDF_2/):
+Usage (from PointSDF/):
     python misc/report_46943_grid_benchmark.py
     python misc/report_46943_grid_benchmark.py --match-2025
     python misc/report_46943_grid_benchmark.py -o misc/thesis_figures/46943_grid_benchmark.csv

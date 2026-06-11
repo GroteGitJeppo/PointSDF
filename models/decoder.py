@@ -85,7 +85,6 @@ class Decoder(nn.Module):
             elif layer != 0 and self.xyz_in_all:
                 x = torch.cat([x, xyz], 1)
             x = lin(x)
-            # last layer Tanh
             if layer == self.num_layers - 2 and self.use_tanh:
                 x = self.tanh(x)
             if layer < self.num_layers - 2:
@@ -108,7 +107,7 @@ class Decoder(nn.Module):
 
 class SDFDecoder(Decoder):
     """
-    Simplified interface over the corepp-style Decoder.
+    Simplified interface over the Facebook DeepSDF Decoder.
 
     Translates high-level knobs (num_layers, inner_dim, skip_connections,
     dropout_prob, weight_norm) into the full Decoder signature so the rest

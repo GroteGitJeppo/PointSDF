@@ -1,4 +1,4 @@
-"""CoRe++-style global SDF query grid extent from complete scans."""
+"""Global SDF query grid half-extent from complete laser scans."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def find_global_grid_half_extent(
     margin: float = 0.0,
 ) -> float:
     """
-    Mirror corepp ``MaskedCameraLaserData.find_global_bbox``.
+    Ported from corepp ``MaskedCameraLaserData.find_global_bbox``.
 
     For each label, load the first matching complete-scan PLY, take the largest
     axis-aligned side length ``dmax``, then return ``dmax / 2`` as the symmetric
@@ -85,7 +85,7 @@ def resolve_grid_bbox(cfg: dict, label_ids: set[str] | list[str]) -> float:
         )
         margin_note = f", +{margin * 100:.0f}% margin" if margin > 0.0 else ""
         print(
-            f"Global grid bbox (CoRe++ find_global_bbox): ±{half:.4f} m "
+            f"Global grid bbox: ±{half:.4f} m "
             f"(side {2 * half * 1000:.1f} mm{margin_note}, "
             f"{len(label_ids)} labels requested)"
         )
@@ -110,8 +110,7 @@ def resolve_inference_grid_bbox(
     Resolve SDF grid half-extent for volume decode (train / select / test).
 
     When ``grid_bbox`` is ``auto``, extent is computed from ``gt_pcd_dir`` over
-    the labels for that run only — matching CoRe++ ``find_global_bbox`` on
-    ``split_ids`` for the dataloader split (not train+val+test combined).
+    the labels for that run only (per-split, not train+val+test combined).
 
     Pass ``label_ids`` to use an explicit set (e.g. test labels after a
     ``--year`` filter). Otherwise pass ``eval_split`` (``train``, ``val``, ``test``).
@@ -124,11 +123,10 @@ def resolve_inference_grid_bbox(
         label_ids = split_labels_from_csv(cfg["splits_csv"], eval_split)
         print(
             f"Inference grid bbox: split={eval_split!r} "
-            f"({len(label_ids)} labels, CoRe++ per-split)"
+            f"({len(label_ids)} labels)"
         )
     else:
         print(
-            f"Inference grid bbox: {len(label_ids)} labels "
-            f"(explicit set, CoRe++ per-split)"
+            f"Inference grid bbox: {len(label_ids)} labels (explicit set)"
         )
     return resolve_grid_bbox(cfg, label_ids)

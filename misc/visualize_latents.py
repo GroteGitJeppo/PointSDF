@@ -18,7 +18,7 @@ Produces PNG figures per run:
   - pca_volume_surface_ratio.png — PCA 2-D, trait coloured (global spectrum scale)
   - tsne_cultivar.png     — t-SNE 2-D, points coloured by cultivar
 
-Usage (run from PointSDF_2/):
+Usage (run from PointSDF/):
     # Stage 1 latents (directory)
     python misc/visualize_latents.py \\
         --latents weights/deepsdf/<run>/latent_codes \\
@@ -76,10 +76,6 @@ def _merge_cultivar(meta: pd.DataFrame, cultivar_csv: str | None) -> pd.DataFram
     print(f"  Merged cultivar from {path} ({n_known}/{len(meta)} labels matched)")
     return meta
 
-
-# ---------------------------------------------------------------------------
-# Loading helpers
-# ---------------------------------------------------------------------------
 
 def _stem_to_label(stem: str) -> str:
     """Extract unique_id from a PLY stem.
@@ -212,10 +208,6 @@ def load_latents(path: str) -> tuple[np.ndarray, list[str]]:
 
     raise ValueError(f"--latents must be a directory or a .pth file, got: {path}")
 
-
-# ---------------------------------------------------------------------------
-# Plot helpers
-# ---------------------------------------------------------------------------
 
 def _scatter(
     ax: plt.Axes,
@@ -451,10 +443,6 @@ def comparison_metric_scales(
     cmap: mcolors.Colormap | str = spectrum_colormap() if use_spectrum else "viridis"
     return vmin, vmax, cmap, ref_max
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main(
     latents_path: str,

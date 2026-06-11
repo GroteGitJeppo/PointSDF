@@ -38,7 +38,7 @@ from tqdm import tqdm
 
 from data.ply_index import load_ply_files
 from models import PointNetEncoder, SDFDecoder
-from utils import get_volume_coords, resolve_hull_sdf_band, sdf2mesh
+from utils import get_volume_coords, sdf2mesh
 from utils.grid_bbox import resolve_inference_grid_bbox
 
 warnings.filterwarnings('ignore')
@@ -46,10 +46,6 @@ warnings.filterwarnings('ignore')
 if not WITH_TORCH_CLUSTER:
     raise SystemExit("This code requires 'torch-cluster'")
 
-
-# ---------------------------------------------------------------------------
-# Helpers (identical to test.py)
-# ---------------------------------------------------------------------------
 
 def process_ply(ply_path: str, num_points: int, pre_transform, device,
                 normalize_half_extent: float = 0.05):
@@ -94,7 +90,6 @@ def evaluate_checkpoint(
     device,
     normalize_half_extent: float = 0.05,
     max_hull_points: int | None = None,
-    hull_sdf_band: float | None = None,
 ) -> tuple[float, float, float, int, int]:
     """
     Run the full pipeline on a list of PLY files and return volume metrics.
@@ -127,7 +122,6 @@ def evaluate_checkpoint(
                 pred_sdf,
                 grid_coords,
                 max_hull_points=max_hull_points,
-                hull_sdf_band=hull_sdf_band,
             )
             if mesh.is_watertight():
                 pred_volume = mesh.get_volume() * 1e6      # m³ → mL
@@ -150,20 +144,14 @@ def evaluate_checkpoint(
     return rmse, mae, r2, n_valid, n_failed
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
 
-    # ----- Architecture -----
     with open(cfg['decoder_config']) as f:
         decoder_cfg = yaml.safe_load(f)
     latent_size = decoder_cfg['latent_size']
 
-    # ----- Decoder (loaded once, frozen) -----
     decoder = SDFDecoder(
         latent_size=latent_size,
         num_layers=decoder_cfg['num_layers'],
@@ -179,7 +167,6 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
     decoder.eval()
     print(f'Loaded frozen decoder from {cfg["decoder_weights"]}')
 
-    # ----- Val PLY files -----
     splits_df = pd.read_csv(cfg['splits_csv'])
     split_ids = set(splits_df.loc[splits_df['split'] == split, 'label'].astype(str))
     if not split_ids:
@@ -191,7 +178,6 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
     volume_col = cfg.get('volume_column', 'volume_ml')
     gt_df = pd.read_csv(cfg['target_csv']).set_index('label')
 
-    # ----- Grid coords (built once) -----
     grid_resolution = cfg.get('grid_resolution', 60)
     grid_bbox = resolve_inference_grid_bbox(cfg, eval_split=split)
     grid_stagger_xy = bool(cfg.get('grid_stagger_xy', False))
@@ -217,17 +203,6 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
     if max_hull_points is not None:
         max_hull_points = int(max_hull_points)
         print(f'Convex hull: max_hull_points={max_hull_points:,}')
-    hull_sdf_band_cells = cfg.get('hull_sdf_band_cells')
-    hull_sdf_band = resolve_hull_sdf_band(
-        grid_bbox, grid_resolution, hull_sdf_band_cells
-    )
-    if hull_sdf_band is not None:
-        print(
-            f'Convex hull: near-surface band '
-            f'(cells={hull_sdf_band_cells}, δ={hull_sdf_band:.5f} m)'
-        )
-
-    # ----- Discover snapshots -----
     snapshots_dir = Path(run_dir) / 'snapshots'
     if not snapshots_dir.exists():
         raise FileNotFoundError(
@@ -245,7 +220,6 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
     print(f'Found {len(snapshot_dirs)} snapshot(s): epochs '
           f'{snapshot_dirs[0].name}–{snapshot_dirs[-1].name}\n')
 
-    # ----- Sweep -----
     encoder = PointNetEncoder(latent_size=latent_size).to(device)
     results: list[dict] = []
 
@@ -261,7 +235,6 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
             num_points, grid_coords, pre_transform, device,
             normalize_half_extent=normalize_half_extent,
             max_hull_points=max_hull_points,
-            hull_sdf_band=hull_sdf_band,
         )
 
         results.append({
@@ -277,7 +250,6 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
         status = f'RMSE={rmse:.2f} mL  MAE={mae:.2f} mL  R²={r2:.3f}  valid={n_valid}/{n_valid+n_failed}'
         tqdm.write(f'Epoch {epoch:04d} | {status}')
 
-    # ----- Rank and report -----
     df = pd.DataFrame(results)
     df_valid = df.dropna(subset=['rmse_ml'])
 
@@ -299,12 +271,10 @@ def main(cfg: dict, run_dir: str, split: str, also_best_mse: bool):
 
     print(f'\nBest checkpoint: epoch {best_epoch:04d}  RMSE={best_rmse:.3f} mL')
 
-    # ----- Save CSV -----
     csv_path = Path(run_dir) / f'val_volume_selection_{grid_resolution}.csv'
     df.to_csv(str(csv_path), index=False)
     print(f'Results saved to: {csv_path}')
 
-    # ----- Copy best checkpoint -----
     best_vol_dir = Path(run_dir) / f'best_vol_{grid_resolution}'
     best_vol_dir.mkdir(exist_ok=True)
     dest = best_vol_dir / 'checkpoint.pth'

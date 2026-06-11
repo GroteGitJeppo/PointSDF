@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Two-stage data preparation pipeline for PointSDF_2.
+Two-stage data preparation pipeline.
 
 Sub-commands
 ------------
@@ -68,8 +68,8 @@ augment
 Adapted from
 ------------
 * ``prepare_3dpotato_dataset.py`` (pcd command) — PointRAFT fork
-* ``corepp/data_preparation/prepare_deepsdf_training_data.py`` (sdf command) — CoRe++ (Blok et al., 2025)
-* ``corepp/data_preparation/augment.py`` (augment command) — CoRe++ (Blok et al., 2025)
+* ``corepp/data_preparation/prepare_deepsdf_training_data.py`` (sdf command)
+* ``corepp/data_preparation/augment.py`` (augment command)
 """
 
 import argparse
@@ -83,18 +83,10 @@ import numpy as np
 import open3d as o3d
 
 
-# ============================================================================
-# Shared utilities
-# ============================================================================
-
 def _check_dir(path: str) -> None:
     if path and not os.path.exists(path):
         os.makedirs(path)
 
-
-# ============================================================================
-# pcd command — RGB-D images → partial point clouds
-# ============================================================================
 
 def _load_intrinsics(intrinsics_file: str) -> o3d.camera.PinholeCameraIntrinsic:
     with open(intrinsics_file) as f:
@@ -189,10 +181,6 @@ def cmd_pcd(args):
     cv2.destroyAllWindows()
     print(f"Point clouds written to {args.out}")
 
-
-# ============================================================================
-# sdf command — complete PLY → TSDF samples.npz
-# ============================================================================
 
 def _generate_tsdf_samples(
     swl_points: np.ndarray,
@@ -349,16 +337,12 @@ def cmd_sdf(args):
     print(f"\nDone. Skipped {skipped}/{len(labels)} labels.")
 
 
-# ============================================================================
-# augment command — complete PLY → augmented TSDF samples.npz variants
-# ============================================================================
-
 def _augment_pcd(pcd: o3d.geometry.PointCloud, cfg: dict) -> o3d.geometry.PointCloud:
     """Apply random scale / rotation-Z / shear-X to a point cloud."""
     import copy
     tmp = copy.deepcopy(pcd)
 
-    # Isotropic scale (per-axis uniform, matching corepp augment.py)
+    # Isotropic scale (from corepp/data_preparation/augment.py)
     scale = np.random.uniform(cfg['min_scale'], cfg['max_scale'], size=(3,))
     pts = np.asarray(tmp.points) * scale
     tmp.points = o3d.utility.Vector3dVector(pts)
@@ -439,13 +423,9 @@ def cmd_augment(args):
     print(f"\nDone. Skipped {skipped}/{len(labels)} labels (no PLY found).")
 
 
-# ============================================================================
-# Entry point
-# ============================================================================
-
 def main():
     parser = argparse.ArgumentParser(
-        description="PointSDF_2 data preparation",
+        description="PointSDF data preparation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)

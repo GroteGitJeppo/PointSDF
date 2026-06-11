@@ -1,10 +1,8 @@
-# ============================================================
-# Stage 1 config: DeepSDF autodecoder (PointSDF_2)
-# Training loop matches corepp/train_deep_sdf.py (L1 + reg, DataParallel).
+# Stage 1 config: DeepSDF autodecoder
+# Training loop ported from corepp/train_deep_sdf.py (L1 + reg, DataParallel).
 # Update paths to match your server layout.
-# ============================================================
 
-description: "PointSDF_2 DeepSDF Stage 1"
+description: "PointSDF DeepSDF Stage 1"
 
 # ---- Data --------------------------------------------------
 # samples.npz: <sdf_data_dir>/<label>/laser/samples.npz or .../<label>/samples.npz
@@ -18,7 +16,7 @@ splits_csv:   data/3DPotatoTwin/splits.csv
 # latent_codes/.  Set to null (or omit) to disable.
 augmented_sdf_data_dir: data/3DPotatoTwin/sdfsamples/potato_augmented
 
-# Labels from the train split only (matching corepp: val used only for checkpoint selection).
+# Labels from the train split only (val used only for checkpoint selection).
 stage1_splits: [train]
 
 # Random SDF points drawn per shape per optimiser step (samples_per_scene).
@@ -53,14 +51,14 @@ reg_ramp_epochs:             100
 
 # nn.Embedding init: N(0, code_init_std_dev / sqrt(latent_size))
 code_init_std_dev: 1.0
-# Embedding max_norm (L2 bound, matching corepp CodeBound: 1.0)
+# Embedding max_norm (L2 bound, 1.0)
 code_bound: 1.0
 
 # Optional gradient clip (L2 norm); null to disable
 gradient_clip_norm: null
 
 # ---- Learning rates (two entries: decoder, then latents) ---
-# Step schedule matching corepp specs.json exactly.
+# Step schedule (from corepp specs.json).
 learning_rate_schedule:
   - Type: Step
     Initial: 0.0005
@@ -71,29 +69,18 @@ learning_rate_schedule:
     Interval: 300
     Factor: 0.5
 
-# ---- Checkpoints (corepp-style: ModelParameters/, LatentCodes/, etc.) -----
+# ---- Checkpoints (ModelParameters/, LatentCodes/, etc.) -----
 snapshot_frequency: 10
-additional_snapshots: [0, 500]   # match corepp AdditionalSnapshots
+additional_snapshots: [0, 500]   # from corepp AdditionalSnapshots
 log_frequency:      10
 
-# ---- Evaluation (corepp-compatible Chamfer for E* selection) --------------
+# ---- Evaluation (Chamfer for E* selection) --------------
 # Directory containing one sub-folder per label, each holding the complete
 # laser/SfM PLY used as GT for Chamfer-based checkpoint selection.
 # Same source as: python data/prepare_dataset.py sdf --src <gt_pcd_dir>
 # If omitted or null, reconstruct.py falls back to its lightweight grid Chamfer.
 gt_pcd_dir:     data/3DPotatoTwin/2_sfm/2_pcd
 gt_ply_pattern: "*.ply"    # glob pattern inside each label folder
-#
-# Optional: same hierarchical SDF decode as Stage 2 test.py (reconstruct.py Chamfer).
-# When hierarchical_decode is true, grid_resolution below is ignored for meshing.
-# grid_stagger_xy: true   # CoRe++-style query grid (see train_encoder.yaml)
-# hierarchical_decode: false
-# grid_resolution: 64
-# coarse_resolution: 16
-# fine_subdiv: 4
-# surface_dilation: 1
-# max_fine_queries: null
-# hierarchical_decode_chunk: 131072
 
 # ---- Resume ------------------------------------------------
 # Use CLI: python train_deepsdf.py -c configs/train_deepsdf.yaml --continue-from latest

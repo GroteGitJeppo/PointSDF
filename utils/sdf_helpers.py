@@ -8,10 +8,6 @@ import open3d as o3d
 import open3d.core as o3c
 
 
-# ---------------------------------------------------------------------------
-# Volume / mesh extraction
-# ---------------------------------------------------------------------------
-
 def get_volume_coords(
     resolution: int = 64,
     bbox: float = 0.15,
@@ -23,9 +19,8 @@ def get_volume_coords(
     Args:
         resolution: number of grid steps per axis (resolution^3 total points)
         bbox:       half-extent of the bounding box in metres
-        stagger_xy: if True, use CoRe++ Grid3D layout (np.mgrid + half-cell xy
-                    offset on alternating points). Matches
-                    corepp/sdfrenderer/grid.py generate_point_from_bbox.
+        stagger_xy: if True, np.mgrid layout with half-cell xy offset on
+                    alternating points (from corepp/sdfrenderer/grid.py).
                     Callers may still add grid_center after this returns.
 
     Returns:
@@ -47,32 +42,18 @@ def get_volume_coords(
     return coords
 
 
-def resolve_hull_sdf_band(
-    grid_bbox: float,
-    grid_resolution: int,
-    hull_sdf_band_cells: int | None,
-) -> float | None:
-    """Return band half-width in metres, or None if band filtering is disabled."""
-    if hull_sdf_band_cells is None:
-        return None
-    cell = (2.0 * float(grid_bbox)) / max(int(grid_resolution) - 1, 1)
-    return float(hull_sdf_band_cells) * cell
-
-
 def sdf2mesh(
     pred_sdf: torch.Tensor,
     grid_points: torch.Tensor,
     t: float = 0.0,
     max_hull_points: int | None = None,
-    hull_sdf_band: float | None = None,
 ):
     """
     Extract a watertight mesh from SDF predictions using convex hull.
     Convex-hull mesh extraction used in this repo for volume estimation.
 
-    Strategy: keep grid points where SDF <= t (optionally only a near-surface
-    band with SDF >= -hull_sdf_band), then compute the convex hull.  If the
-    result is not watertight, iteratively voxel-downsample until it is.
+    Strategy: keep grid points where SDF <= t, then compute the convex hull.
+    If the result is not watertight, iteratively voxel-downsample until it is.
 
     Args:
         pred_sdf:    (N,) or (N, 1) SDF values on CUDA
@@ -80,8 +61,6 @@ def sdf2mesh(
         t:           threshold (default 0.0)
         max_hull_points: if set, randomly subsample interior points to this
             count before hull (speed vs accuracy trade-off; None = use all)
-        hull_sdf_band: if set, keep only points with SDF >= -hull_sdf_band
-            (metres); None = full interior (SDF <= t only)
 
     Returns:
         mesh: open3d.geometry.TriangleMesh (watertight, on CPU)
@@ -92,8 +71,6 @@ def sdf2mesh(
     """
     pred_sdf = pred_sdf.squeeze()
     keep_idx = torch.le(pred_sdf, t)
-    if hull_sdf_band is not None:
-        keep_idx = keep_idx & torch.ge(pred_sdf, -hull_sdf_band)
     keep_points = grid_points[keep_idx].contiguous()
 
     n_keep = keep_points.shape[0]
@@ -139,10 +116,6 @@ def _clean_mesh(mesh):
     return mesh
 
 
-# ---------------------------------------------------------------------------
-# Loss
-# ---------------------------------------------------------------------------
-
 def sdf_autodecoder_loss_chunk(
     pred_sdf: torch.Tensor,
     target_sdf: torch.Tensor,
@@ -179,10 +152,6 @@ def sdf_autodecoder_loss_chunk(
 
     return chunk_loss, loss_l1.detach(), reg_l2, reg_sphere
 
-
-# ---------------------------------------------------------------------------
-# Chamfer distance
-# ---------------------------------------------------------------------------
 
 def chamfer_distance(pred_pts: torch.Tensor, gt_pts: torch.Tensor) -> float:
     """

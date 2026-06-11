@@ -6,7 +6,7 @@ Uses only dataset intrinsics (no test-results CSV):
   - ``splits.csv`` (2023 train, 2025 test full set)
   - misc/eda.ipynb 2025 subsample (trait bounds + volume-matched, seed 50)
 
-Usage (from PointSDF_2/ or misc/):
+Usage (from PointSDF/ or misc/):
     python misc/export_cohort_distribution_compare.py
     python misc/export_cohort_distribution_compare.py --output-dir misc/figures/cohort_distributions
     python misc/export_cohort_distribution_compare.py --data-root data/3DPotatoTwin
