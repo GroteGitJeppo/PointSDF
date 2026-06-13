@@ -277,9 +277,23 @@ python test.py \
 
 Default `results_dir: results` → e.g. `results/5471226_32_t18_05_192853.csv`.
 
-Encoder latents per scan: `<latent_dir>/test/<ply_stem>.pth`.
+Encoder latents: PointNet runs save `all_latents.pth` under `weights/encoder/<run>/latent_dir/`. CoRe++ runs save under `<latent_dir>/test/`.
 
 Console reports volume MAE / RMSE / R², optional Chamfer and precision/recall/F1 (5 mm threshold) when `gt_pcd_dir` is set, and per-cultivar / per-year breakdowns when columns exist.
+
+**CoRe++ RGB-D baseline (optional):** Uncomment the `encoder` block in `configs/train_encoder.yaml`, prepare RGB-D data once, then run without `--checkpoint`:
+
+```bash
+python data/organize_corepp_rgbd.py \
+    --src data/3DPotatoTwin/1_rgbd/1_image \
+    --dst data/3DPotatoTwin/corepp_rgbd
+python data/setup_corepp_rgbd.py \
+    --dst data/3DPotatoTwin/corepp_rgbd \
+    --splits_csv data/3DPotatoTwin/splits.csv \
+    --intrinsics data/3DPotatoTwin/1_rgbd/0_camera_intrinsics/realsense_d405_camera_intrinsic.json
+
+python test.py -c configs/train_encoder.yaml
+```
 
 **Debug decode / volume issues:** `python diagnose_decode.py --config configs/train_encoder.yaml`
 
