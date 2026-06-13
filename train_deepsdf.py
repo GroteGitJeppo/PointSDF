@@ -30,6 +30,7 @@ import yaml
 from data.sdf_scene_dataset import SDFSceneDataset
 from models.decoder import Decoder
 from models import SDFDecoder
+from utils.sdf_helpers import sdf_autodecoder_loss_chunk
 
 # Workspace layout from corepp/deepsdf/deep_sdf/workspace.py
 
@@ -343,8 +344,6 @@ def main_function(cfg, continue_from, batch_split):
         get_mean_latent_vector_magnitude(lat_vecs),
     )
 
-    loss_l1 = torch.nn.L1Loss(reduction="sum")
-
     optimizer_all = optim.Adam(
         [
             {
@@ -476,21 +475,17 @@ def main_function(cfg, continue_from, batch_split):
                 if enforce_minmax:
                     pred_sdf = torch.clamp(pred_sdf, min_t, max_t)
 
-                chunk_loss = loss_l1(pred_sdf, sdf_gt[bi]) / num_sdf_samples
-
-                if do_code_regularization:
-                    l2_size_loss = torch.sum(torch.norm(batch_vecs, dim=1))
-                    reg_loss = (
-                        code_reg_lambda * min(1, epoch / reg_ramp_epochs) * l2_size_loss
-                    ) / num_sdf_samples
-                    chunk_loss = chunk_loss + reg_loss
-
-                if do_code_regularization_sphere:
-                    sphere_loss_reg = torch.abs(1 - torch.norm(batch_vecs, dim=1)).sum()
-                    reg_loss = (
-                        code_reg_lambda * min(1, epoch / reg_ramp_epochs) * sphere_loss_reg
-                    ) / num_sdf_samples
-                    chunk_loss = chunk_loss + reg_loss
+                chunk_loss, _, _, _ = sdf_autodecoder_loss_chunk(
+                    pred_sdf,
+                    sdf_gt[bi],
+                    batch_vecs,
+                    num_sdf_samples,
+                    epoch,
+                    code_reg_lambda,
+                    reg_ramp_epochs,
+                    do_code_regularization,
+                    do_code_regularization_sphere,
+                )
 
                 chunk_loss.backward()
                 batch_loss += chunk_loss.item()

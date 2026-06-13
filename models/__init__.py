@@ -1,5 +1,4 @@
 from .encoder import PointNetEncoder
-from .decoder import SDFDecoder
-from .pointsdf import PointSDF
+from .decoder import SDFDecoder, load_decoder_weights
 
-__all__ = ['PointNetEncoder', 'SDFDecoder', 'PointSDF']
+__all__ = ['PointNetEncoder', 'SDFDecoder', 'load_decoder_weights']

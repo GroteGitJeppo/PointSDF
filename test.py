@@ -43,18 +43,17 @@ import numpy as np
 import open3d as o3d
 import pandas as pd
 import torch
-import torch_fpsample
 import torch_geometric.transforms as T
 import yaml
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
-from torch_geometric.data import Data
 from torch_geometric.typing import WITH_TORCH_CLUSTER
 from tqdm import tqdm
 
 from data.ply_index import load_ply_files
+from data.ply_loader import process_ply
 from data.rgbd_corepp_dataset import RgbdCoreppDataset, RgbdSampleError
-from models import PointNetEncoder, SDFDecoder
-from models.corepp_encoder import build_corepp_encoder, load_corepp_encoder_state
+from models import PointNetEncoder, SDFDecoder, load_decoder_weights
+from models.corepp import build_corepp_encoder, load_corepp_encoder_state
 from utils import get_volume_coords, sdf2mesh
 from utils.grid_bbox import resolve_inference_grid_bbox
 from utils.test_trace import TestTraceLogger, print_repo_state
@@ -115,30 +114,6 @@ def _encoder_latent_test_dir(
     return str(Path(encoder_output_dir or 'weights/encoder') / run_name / 'latent_dir')
 
 
-def process_ply(ply_path: str, num_points: int, pre_transform, device,
-                normalize_half_extent: float = 0.05):
-    """Load, centre, normalise, FPS-sample a .ply file and return a batched PyG Data."""
-    pcd = o3d.io.read_point_cloud(ply_path)
-    points = torch.tensor(np.asarray(pcd.points), dtype=torch.float)
-    data = Data(pos=points)
-    data = pre_transform(data)
-    points = data.pos
-
-    max_half_extent = points.abs().max().item()
-    if max_half_extent > 1e-6:
-        scale = max_half_extent / normalize_half_extent
-        points = points / scale
-    else:
-        scale = 1.0
-
-    if points.size(0) > num_points:
-        points, _ = torch_fpsample.sample(points, num_points)
-    data = Data(pos=points)
-    data.batch = torch.zeros(points.size(0), dtype=torch.int64)
-    data.scale = torch.tensor([scale], dtype=torch.float)
-    return data.to(device)
-
-
 def _load_gt_pcd(gt_pcd_dir: str, unique_id: str, ply_pattern: str):
     """Load complete laser/SfM PLY for a tuber, centred to match partial-scan pre-transform."""
     matches = glob.glob(os.path.join(gt_pcd_dir, unique_id, ply_pattern))
@@ -171,21 +146,6 @@ def _chamfer_and_pr_one_pass(gt_pcd, mesh, cd_metric: ChamferDistance, pr_metric
     else:
         f1 = 2 * p * r / (p + r)
     return chamfer_m, p, r, f1
-
-
-def _load_decoder_weights(decoder, weights_path: str, device: torch.device) -> None:
-    """Load Stage 1 (model_state_dict) or Stage 2 (decoder_state_dict) decoder weights."""
-    ckpt = torch.load(weights_path, map_location=device, weights_only=False)
-    if isinstance(ckpt, dict) and "decoder_state_dict" in ckpt:
-        state = ckpt["decoder_state_dict"]
-    elif isinstance(ckpt, dict) and "model_state_dict" in ckpt:
-        state = ckpt["model_state_dict"]
-    elif isinstance(ckpt, dict):
-        state = ckpt
-    else:
-        raise ValueError(f"Unexpected decoder checkpoint format: {weights_path}")
-    state = {k.removeprefix("module."): v for k, v in state.items()}
-    decoder.load_state_dict(state)
 
 
 def _encoder_settings(cfg: dict) -> dict:
@@ -346,7 +306,7 @@ def main(
             raise ValueError(
                 "encoder.type is 'corepp_rgbd' requires 'decoder_weights' in config"
             )
-        _load_decoder_weights(decoder, decoder_weights, device)
+        load_decoder_weights(decoder, decoder_weights, device)
         decoder.eval()
         print(f'Loaded decoder from {decoder_weights}')
 

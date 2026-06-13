@@ -25,18 +25,16 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-import open3d as o3d
 import pandas as pd
 import torch
-import torch_fpsample
 import torch_geometric.transforms as T
 import yaml
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
-from torch_geometric.data import Data
 from torch_geometric.typing import WITH_TORCH_CLUSTER
 from tqdm import tqdm
 
 from data.ply_index import load_ply_files
+from data.ply_loader import process_ply
 from models import PointNetEncoder, SDFDecoder
 from utils import get_volume_coords, sdf2mesh
 from utils.grid_bbox import resolve_inference_grid_bbox
@@ -45,36 +43,6 @@ warnings.filterwarnings('ignore')
 
 if not WITH_TORCH_CLUSTER:
     raise SystemExit("This code requires 'torch-cluster'")
-
-
-def process_ply(ply_path: str, num_points: int, pre_transform, device,
-                normalize_half_extent: float = 0.05):
-    """Load, centre, normalise, FPS-sample a .ply file and return a batched PyG Data.
-
-    Mirrors PointCloudLatentDataset.__getitem__: centre → isotropic normalise
-    (max abs coord = normalize_half_extent) → FPS.  The scale ratio is stored
-    as data.scale so the encoder can recover metric size information.
-    """
-    pcd = o3d.io.read_point_cloud(ply_path)
-    points = torch.tensor(np.asarray(pcd.points), dtype=torch.float)
-    data = Data(pos=points)
-    data = pre_transform(data)          # centres the cloud
-    points = data.pos
-
-    # Isotropic normalisation — same as _normalize_points in encoder_dataset.py
-    max_half_extent = points.abs().max().item()
-    if max_half_extent > 1e-6:
-        scale = max_half_extent / normalize_half_extent
-        points = points / scale
-    else:
-        scale = 1.0
-
-    if points.size(0) > num_points:
-        points, _ = torch_fpsample.sample(points, num_points)
-    data = Data(pos=points)
-    data.batch = torch.zeros(points.size(0), dtype=torch.int64)
-    data.scale = torch.tensor([scale], dtype=torch.float)
-    return data.to(device)
 
 
 @torch.no_grad()

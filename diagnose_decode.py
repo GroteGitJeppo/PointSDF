@@ -20,7 +20,7 @@ import yaml
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 from tqdm import tqdm
 
-from models import SDFDecoder
+from models import SDFDecoder, load_decoder_weights
 from utils import get_volume_coords, sdf2mesh
 
 warnings.filterwarnings("ignore")
@@ -33,11 +33,7 @@ def _load_decoder(cfg: dict, decoder_cfg: dict, device: torch.device) -> SDFDeco
         inner_dim=decoder_cfg["inner_dim"],
         skip_connections=decoder_cfg["skip_connections"],
     ).float().to(device)
-
-    ckpt = torch.load(cfg["decoder_weights"], map_location=device)
-    sd = ckpt.get("model_state_dict", ckpt)
-    sd = {k.removeprefix("module."): v for k, v in sd.items()}
-    decoder.load_state_dict(sd)
+    load_decoder_weights(decoder, cfg["decoder_weights"], device)
     decoder.eval()
     for p in decoder.parameters():
         p.requires_grad_(False)

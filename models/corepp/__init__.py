@@ -1,4 +1,13 @@
-from .models import EncoderBigPooled
-from .utils import strip_module_prefix
+from .models import (
+    EncoderBigPooled,
+    build_corepp_encoder,
+    load_corepp_encoder_state,
+    strip_module_prefix,
+)
 
-__all__ = ["EncoderBigPooled", "strip_module_prefix"]
+__all__ = [
+    "EncoderBigPooled",
+    "build_corepp_encoder",
+    "load_corepp_encoder_state",
+    "strip_module_prefix",
+]

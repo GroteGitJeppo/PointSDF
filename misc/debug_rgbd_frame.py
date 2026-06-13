@@ -20,9 +20,9 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.rgbd_corepp_dataset import RgbdCoreppDataset, RgbdSampleError, resolve_depth_bounds
-from models import SDFDecoder
-from models.corepp_encoder import build_corepp_encoder, load_corepp_encoder_state
-from test import _decode_volume, _load_decoder_weights, _load_gt_pcd, _sync_cuda, _encoder_settings
+from models import SDFDecoder, load_decoder_weights
+from models.corepp import build_corepp_encoder, load_corepp_encoder_state
+from test import _decode_volume, _load_gt_pcd, _sync_cuda, _encoder_settings
 from utils.test_trace import print_repo_state
 
 
@@ -48,7 +48,7 @@ def main() -> None:
         inner_dim=decoder_cfg["inner_dim"],
         skip_connections=decoder_cfg["skip_connections"],
     ).to(device)
-    _load_decoder_weights(decoder, cfg["decoder_weights"], device)
+    load_decoder_weights(decoder, cfg["decoder_weights"], device)
     decoder.eval()
 
     encoder = build_corepp_encoder(

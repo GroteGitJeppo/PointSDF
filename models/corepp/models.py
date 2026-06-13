@@ -1,8 +1,22 @@
+"""CoRe++ EncoderBigPooled (super3d_32 pool) — ported from corepp/networks/models.py."""
+
+from __future__ import annotations
+
 import functools
 import operator
+from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+
+
+def strip_module_prefix(state_dict: dict) -> dict:
+    """Remove leading ``module.`` from DataParallel checkpoints."""
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        name = k[7:] if k.startswith("module.") else k
+        new_state_dict[name] = v
+    return new_state_dict
 
 
 class EncoderBigPooled(nn.Module):
@@ -53,3 +67,26 @@ class EncoderBigPooled(nn.Module):
         batch_size = input.shape[0]
         out = self.encoder(input)
         return out.reshape(batch_size, self.latent_size).float()
+
+
+def build_corepp_encoder(
+    latent_size: int,
+    input_size: int = 304,
+    in_channels: int = 4,
+) -> nn.Module:
+    """Instantiate the CoRe++ EncoderBigPooled RGB-D CNN."""
+    return EncoderBigPooled(in_channels, latent_size, input_size)
+
+
+def load_corepp_encoder_state(
+    encoder: nn.Module, checkpoint_path: str, device: str = "cpu"
+) -> None:
+    """Load ``encoder_state_dict`` from a CoRe++ ``.pt`` checkpoint."""
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    if isinstance(ckpt, dict) and "encoder_state_dict" in ckpt:
+        state = ckpt["encoder_state_dict"]
+    elif isinstance(ckpt, dict):
+        state = ckpt
+    else:
+        raise ValueError(f"Unexpected checkpoint format: {checkpoint_path}")
+    encoder.load_state_dict(strip_module_prefix(state))

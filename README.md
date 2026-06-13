@@ -348,13 +348,14 @@ PointSDF/
 │   ├── prepare_dataset.py       # pcd | sdf | augment
 │   ├── sdf_scene_dataset.py     # Stage 1 RAM dataset
 │   ├── encoder_dataset.py       # Stage 2 partial PLY + latents
+│   ├── ply_loader.py            # shared PLY load + FPS for inference
 │   ├── sdf_samples.py           # resolve_samples_npz()
 │   ├── ply_index.py             # fast PLY lookup CSV
 │   └── merge_mesh_traits.py
 ├── models/
 │   ├── encoder.py               # PointNetEncoder
-│   ├── decoder.py               # SDFDecoder
-│   └── pointsdf.py              # encoder + decoder wrapper
+│   ├── decoder.py               # SDFDecoder + load_decoder_weights
+│   └── corepp/                  # CoRe++ EncoderBigPooled (RGB-D baseline)
 ├── metrics_3d/
 │   ├── chamfer_distance.py
 │   └── precision_recall.py

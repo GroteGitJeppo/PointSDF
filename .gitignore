@@ -212,6 +212,7 @@ __marimo__/
 # Custom folders
 .vscode
 weights
+results
 data/3DPotatoTwin/1_rgbd
 data/3DPotatoTwin/2_sfm
 data/3DPotatoTwin/3_pair

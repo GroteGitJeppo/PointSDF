@@ -32,7 +32,8 @@ from tqdm import tqdm
 
 from data.ply_index import load_ply_files
 from models import PointNetEncoder
-from test import _encoder_run_name, process_ply
+from data.ply_loader import process_ply
+from test import _encoder_run_name
 
 if not WITH_TORCH_CLUSTER:
     raise SystemExit("This code requires 'torch-cluster'")

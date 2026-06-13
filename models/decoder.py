@@ -1,6 +1,21 @@
-import torch.nn as nn
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+
+
+def load_decoder_weights(decoder: nn.Module, weights_path: str, device: torch.device) -> None:
+    """Load Stage 1 (model_state_dict) or Stage 2 (decoder_state_dict) decoder weights."""
+    ckpt = torch.load(weights_path, map_location=device, weights_only=False)
+    if isinstance(ckpt, dict) and "decoder_state_dict" in ckpt:
+        state = ckpt["decoder_state_dict"]
+    elif isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+        state = ckpt["model_state_dict"]
+    elif isinstance(ckpt, dict):
+        state = ckpt
+    else:
+        raise ValueError(f"Unexpected decoder checkpoint format: {weights_path}")
+    state = {k.removeprefix("module."): v for k, v in state.items()}
+    decoder.load_state_dict(state)
 
 
 class Decoder(nn.Module):
