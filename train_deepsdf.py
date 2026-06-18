@@ -440,6 +440,7 @@ def main_function(cfg, continue_from, batch_split):
 
         adjust_learning_rate(lr_schedules, optimizer_all, epoch)
 
+        epoch_losses: list[float] = []
         for scene_idx in range(len(sdf_dataset)):
             sample = sdf_dataset[scene_idx]
 
@@ -490,14 +491,17 @@ def main_function(cfg, continue_from, batch_split):
                 chunk_loss.backward()
                 batch_loss += chunk_loss.item()
 
-            lr = lr_schedules[0].get_learning_rate(epoch)
-            logging.info("epoch %s, loss = %s, lr = %s", epoch, batch_loss, lr)
-            loss_log.append(batch_loss)
+            epoch_losses.append(batch_loss)
 
             if grad_clip is not None:
                 torch.nn.utils.clip_grad_norm_(decoder.parameters(), grad_clip)
 
             optimizer_all.step()
+
+        mean_loss = sum(epoch_losses) / len(epoch_losses)
+        lr = lr_schedules[0].get_learning_rate(epoch)
+        logging.info("epoch %s, mean loss = %.6f, lr = %s", epoch, mean_loss, lr)
+        loss_log.append(mean_loss)
 
         elapsed = time.time() - t0
         timing_log.append(elapsed)
