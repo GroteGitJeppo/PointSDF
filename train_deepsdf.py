@@ -26,6 +26,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import yaml
+from tqdm import tqdm
 
 from data.sdf_scene_dataset import SDFSceneDataset
 from models.decoder import Decoder
@@ -441,7 +442,12 @@ def main_function(cfg, continue_from, batch_split):
         adjust_learning_rate(lr_schedules, optimizer_all, epoch)
 
         epoch_losses: list[float] = []
-        for scene_idx in range(len(sdf_dataset)):
+        scene_iter = tqdm(
+            range(len(sdf_dataset)),
+            desc=f"Epoch {epoch}/{num_epochs}",
+            leave=False,
+        )
+        for scene_idx in scene_iter:
             sample = sdf_dataset[scene_idx]
 
             sdf_data = sample["sdf_data"]
@@ -492,6 +498,10 @@ def main_function(cfg, continue_from, batch_split):
                 batch_loss += chunk_loss.item()
 
             epoch_losses.append(batch_loss)
+            scene_iter.set_postfix(
+                loss=f"{batch_loss:.4f}",
+                mean=f"{sum(epoch_losses) / len(epoch_losses):.4f}",
+            )
 
             if grad_clip is not None:
                 torch.nn.utils.clip_grad_norm_(decoder.parameters(), grad_clip)
