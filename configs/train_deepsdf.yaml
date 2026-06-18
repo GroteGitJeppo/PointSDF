@@ -7,7 +7,7 @@ description: "PointSDF DeepSDF Stage 1"
 # ---- Data --------------------------------------------------
 # samples.npz: <sdf_data_dir>/<label>/laser/samples.npz or .../<label>/samples.npz
 sdf_data_dir: data/3DPotatoTwin/sdfsamples/potato
-splits_csv:   data/3DPotatoTwin/splits.csv
+splits_csv:   data/3DPotatoTwin/splits_combined.csv
 
 # Optional: directory of pre-generated augmented shapes (sub-folders named
 # <label>_00 … <label>_09).  Every sub-folder with a samples.npz is added to
