@@ -82,5 +82,9 @@ log_frequency:      10
 gt_pcd_dir:     data/3DPotatoTwin/2_sfm/2_pcd
 gt_ply_pattern: "*.ply"    # glob pattern inside each label folder
 
+# ---- Latent reconstruction (reconstruct.py; corepp reconstruct_deep_sdf.py) ----
+reconstruct_clamp_dist: 1.0   # hardcoded in corepp (not training clamp_value)
+reconstruct_l2reg:      false  # corepp calls reconstruct(..., l2reg=False)
+
 # ---- Resume ------------------------------------------------
 # Use CLI: python train_deepsdf.py -c configs/train_deepsdf.yaml --continue-from latest

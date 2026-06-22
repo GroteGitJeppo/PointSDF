@@ -111,7 +111,7 @@ def _optimise_latent(
     num_iterations: int = 800,
     num_samples: int = 32000,
     lr: float = 0.1,
-    l2reg: bool = True,
+    l2reg: bool = False,
 ) -> torch.Tensor:
     """
     Optimise a single latent code from SDF samples of one shape.
@@ -245,6 +245,15 @@ def _discover_checkpoints(experiment_dir: str, step: int) -> list[int]:
     return sorted(epochs)
 
 
+def _reconstruct_clamp_dist(cfg: dict) -> float:
+    """Clamp band for latent optimisation (corepp reconstruct_deep_sdf.py uses 1.0)."""
+    return float(cfg.get("reconstruct_clamp_dist", 1.0))
+
+
+def _reconstruct_l2reg(cfg: dict) -> bool:
+    return bool(cfg.get("reconstruct_l2reg", False))
+
+
 def _run_checkpoint(
     checkpoint: str,
     experiment_dir: str,
@@ -262,7 +271,10 @@ def _run_checkpoint(
     Latents are saved to disk; existing files are re-used when --skip is set.
     """
     latent_size = int(cfg["latent_size"])
-    clamp_dist = float(cfg.get("clamp_value", cfg.get("clamping_distance", 0.1)))
+    recon_clamp = _reconstruct_clamp_dist(cfg)
+    recon_l2reg = _reconstruct_l2reg(cfg)
+    # Grid bbox for optional Chamfer uses Stage 1 training clamp, not recon clamp.
+    chamfer_clamp = float(cfg.get("clamp_value", cfg.get("clamping_distance", 0.1)))
 
     try:
         decoder = _load_decoder(experiment_dir, checkpoint, cfg)
@@ -293,11 +305,11 @@ def _run_checkpoint(
                 latent_size=latent_size,
                 emp_mean=emp_mean,
                 emp_std=emp_std,
-                clamp_dist=clamp_dist,
+                clamp_dist=recon_clamp,
                 num_iterations=args.iters,
                 num_samples=args.num_samples,
                 lr=args.lr,
-                l2reg=True,
+                l2reg=recon_l2reg,
             )
             torch.save(latent, out_path)
 
@@ -315,7 +327,7 @@ def _run_checkpoint(
                 cd = _chamfer_for_latent(
                     latent=latent,
                     decoder=decoder,
-                    clamp_dist=clamp_dist,
+                    clamp_dist=chamfer_clamp,
                     gt_pcd_dir=gt_pcd_dir,
                     label=label,
                     ply_pattern=ply_pattern,
