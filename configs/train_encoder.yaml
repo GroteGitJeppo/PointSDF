@@ -5,7 +5,7 @@
 
 # ---- Data (server paths) -----------------------------------
 data_root:  data/3DPotatoTwin/1_rgbd/2_pcd
-splits_csv: data/3DPotatoTwin/splits.csv
+splits_csv: data/3DPotatoTwin/splits_combined.csv
 # Pre-built PLY file index for fast lookup in test.py / select_checkpoint.py.
 # Build once on the server (replaces slow rglob on network filesystems):
 #   python -m data.ply_index --data_root data/3DPotatoTwin/1_rgbd/2_pcd \
